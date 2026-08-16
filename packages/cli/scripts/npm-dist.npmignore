@@ -1,0 +1,4 @@
+# `dist/` contains both the compiled CLI and local marketplace release artifacts.
+# Keep the latter available to the user without publishing them in the npm package.
+release/
+*-release-*.tar.gz

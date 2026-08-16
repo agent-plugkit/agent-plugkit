@@ -1,0 +1,22 @@
+{
+  "name": "agent-plugkit-monorepo",
+  "version": "0.1.1",
+  "private": true,
+  "description": "Development repository for the Agent Plugkit CLI",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "clean": "npm run clean --workspace agent-plugkit",
+    "build": "npm run build --workspace agent-plugkit",
+    "test": "npm test --workspace agent-plugkit",
+    "test:cli": "npm run test:cli --workspace agent-plugkit",
+    "test:package": "npm run test:package --workspace agent-plugkit",
+    "check:public": "node scripts/check-public-tree.mjs",
+    "agent-plugkit": "npm run agent-plugkit --workspace agent-plugkit --",
+    "dev": "npm run dev --workspace agent-plugkit --",
+    "pack:cli": "npm pack --workspace agent-plugkit --dry-run"
+  }
+}
