@@ -673,6 +673,7 @@ function writeRegistrationIndexes(root: string): void {
     '.agents/plugins/marketplace.json',
     '.github/plugin/marketplace.json',
     '.cursor-plugin/marketplace.json',
+    '.grok-plugin/marketplace.json',
     'marketplace.json',
   ]) {
     const path = join(root, relativePath);
@@ -709,13 +710,14 @@ async function testRegistrationRegistry(): Promise<void> {
       return { status: 'completed' as const, changed: true, settingsPath };
     },
   };
-  const targetIds: AgentTargetId[] = ['claude', 'codex', 'copilot', 'vscode', 'cursor'];
+  const targetIds: AgentTargetId[] = ['claude', 'codex', 'grok', 'copilot', 'vscode', 'cursor'];
   const inspection = await inspectMarketplaceRegistration(root, { targetIds, runtime });
   assert.deepEqual(
     inspection.targets.map((target) => [target.id, target.status]),
     [
       ['claude', 'ready'],
       ['codex', 'missing-cli'],
+      ['grok', 'ready'],
       ['copilot', 'ready'],
       ['vscode', 'ready'],
       ['cursor', 'manual-required'],
@@ -729,6 +731,7 @@ async function testRegistrationRegistry(): Promise<void> {
     [
       ['claude', 'completed'],
       ['codex', 'missing-cli'],
+      ['grok', 'completed'],
       ['copilot', 'failed'],
       ['vscode', 'completed'],
       ['cursor', 'manual-required'],
@@ -742,8 +745,10 @@ async function testRegistrationRegistry(): Promise<void> {
     [
       ['claude', ['plugin', 'marketplace', 'add', '--help'], true],
       ['codex', ['plugin', 'marketplace', 'add', '--help'], true],
+      ['grok', ['plugin', 'marketplace', 'add', '--help'], true],
       ['copilot', ['plugin', 'marketplace', 'add', '--help'], true],
       ['claude', ['plugin', 'marketplace', 'add', realpathSync(root)], false],
+      ['grok', ['plugin', 'marketplace', 'add', realpathSync(root)], false],
       ['copilot', ['plugin', 'marketplace', 'add', realpathSync(root)], false],
     ],
   );
@@ -786,6 +791,17 @@ async function testRegistrationRegistry(): Promise<void> {
   const cursorOnly = await executeMarketplaceRegistration(cursorInspection, { runtime });
   assert.equal(cursorOnly.exitCode, 1);
   assert.equal(cursorOnly.results[0]?.status, 'failed');
+
+  const missingGrokRoot = mkdtempSync(join(tmpdir(), 'agent-plugkit-grok-index-'));
+  const grokInspection = await inspectMarketplaceRegistration(missingGrokRoot, {
+    targetIds: ['grok'],
+    runtime,
+  });
+  assert.equal(grokInspection.targets[0]?.status, 'failed');
+  assert.match(grokInspection.targets[0]?.message ?? '', /\.grok-plugin\/marketplace\.json/);
+  const grokOnly = await executeMarketplaceRegistration(grokInspection, { runtime });
+  assert.equal(grokOnly.exitCode, 1);
+  assert.equal(grokOnly.results[0]?.status, 'failed');
 }
 
 async function testVscodeSourceReadOnlyBoundary(): Promise<void> {
@@ -932,21 +948,21 @@ async function testInspectionInterruption(): Promise<void> {
 
 async function testCommandSelectionAndPresentation(): Promise<void> {
   assert.deepEqual(
-    parseTargetSelection('3, 1, 1', ['claude', 'codex', 'copilot', 'vscode', 'cursor'], [
+    parseTargetSelection('4, 1, 1', ['claude', 'codex', 'grok', 'copilot', 'vscode', 'cursor'], [
       'claude',
     ]),
     ['claude', 'copilot'],
   );
   assert.deepEqual(
-    parseTargetSelection('', ['claude', 'codex', 'copilot', 'vscode', 'cursor'], [
+    parseTargetSelection('', ['claude', 'codex', 'grok', 'copilot', 'vscode', 'cursor'], [
       'claude',
       'vscode',
     ]),
     ['claude', 'vscode'],
   );
   assert.deepEqual(
-    parseTargetSelection('all', ['claude', 'codex', 'copilot', 'vscode', 'cursor'], []),
-    ['claude', 'codex', 'copilot', 'vscode', 'cursor'],
+    parseTargetSelection('all', ['claude', 'codex', 'grok', 'copilot', 'vscode', 'cursor'], []),
+    ['claude', 'codex', 'grok', 'copilot', 'vscode', 'cursor'],
   );
   expectThrows(
     () => parseTargetSelection('1-3', ['claude', 'codex'], ['claude']),
@@ -1066,6 +1082,7 @@ async function testCommandSelectionAndPresentation(): Promise<void> {
   assert.deepEqual(prompted.report?.results.map((item) => item.id), [
     'claude',
     'codex',
+    'grok',
     'copilot',
     'vscode',
   ]);
@@ -1092,6 +1109,7 @@ async function testCommandSelectionAndPresentation(): Promise<void> {
   assert.deepEqual(allTargets.report?.results.map((item) => item.id), [
     'claude',
     'codex',
+    'grok',
     'copilot',
     'vscode',
     'cursor',

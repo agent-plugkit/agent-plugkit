@@ -46,7 +46,7 @@ export interface MarketplaceRegistrationAdapter {
 }
 
 interface NativeAdapterDefinition {
-  readonly id: 'claude' | 'codex' | 'copilot';
+  readonly id: 'claude' | 'codex' | 'copilot' | 'grok';
   readonly label: string;
   readonly executable: string;
   readonly localIndexCandidates: readonly string[];
@@ -307,6 +307,14 @@ const codexAdapter = nativeAdapter({
   missingRecovery: '安装或升级 Codex CLI，确认 plugin marketplace add 可用后重试。',
 });
 
+const grokAdapter = nativeAdapter({
+  id: 'grok',
+  label: 'Grok Build',
+  executable: 'grok',
+  localIndexCandidates: ['.grok-plugin/marketplace.json'],
+  missingRecovery: '安装或升级 Grok Build CLI，确认 plugin marketplace add 可用后重试。',
+});
+
 const copilotAdapter = nativeAdapter({
   id: 'copilot',
   label: 'GitHub Copilot',
@@ -443,6 +451,7 @@ const cursorAdapter: MarketplaceRegistrationAdapter = {
 export const MARKETPLACE_REGISTRATION_ADAPTERS: readonly MarketplaceRegistrationAdapter[] = [
   claudeAdapter,
   codexAdapter,
+  grokAdapter,
   copilotAdapter,
   vscodeAdapter,
   cursorAdapter,

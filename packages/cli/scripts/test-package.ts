@@ -139,6 +139,10 @@ assert.equal(
   true,
 );
 assert.equal(
+  existsSync(join(releaseDir, '.grok-plugin', 'marketplace.json')),
+  true,
+);
+assert.equal(
   readdirSync(join(releaseFixtureRoot, 'dist')).some((name) => /-release-.*\.tar\.gz$/.test(name)),
   true,
   'release-local must create a local archive before npm package isolation is checked',

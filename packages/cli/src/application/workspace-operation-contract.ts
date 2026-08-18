@@ -315,6 +315,7 @@ function isGenerationArtifact(
       "codex",
       "cursor",
       "github-copilot",
+      "grok",
       "shared",
     ]).has(
       String(value.platform),

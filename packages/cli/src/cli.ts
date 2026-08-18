@@ -162,11 +162,11 @@ program
   .description('把已就绪的 marketplace 注册到所选 agent（不安装具体插件）')
   .option(
     '--agent <agent>',
-    '目标 agent，可重复: claude, codex, copilot, vscode, cursor',
+    '目标 agent，可重复: claude, codex, grok, copilot, vscode, cursor',
     (value: string, previous: string[]) => [...previous, value],
     [],
   )
-  .option('--all', '选择全部五个 agent（Cursor 仍需手工处理）')
+  .option('--all', '选择全部六个 agent（Cursor 仍需手工处理）')
   .action(
     async (
       source: string,

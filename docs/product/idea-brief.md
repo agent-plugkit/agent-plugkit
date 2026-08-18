@@ -24,13 +24,13 @@
 
 > Build and maintain AI agent plugin marketplaces from one declarative source.
 
-以 `plugin.yaml` 为单一事实来源，提供脚手架、验证、构建、索引与本地发布的完整 CLI 闭环，生成 Agent Plugins 1.0 可移植包、Claude Code / Codex 原生产物以及 Copilot/VS Code、Cursor 等客户端可消费的仓库索引。
+以 `plugin.yaml` 为单一事实来源，提供脚手架、验证、构建、索引与本地发布的完整 CLI 闭环，生成 Agent Plugins 1.0 可移植包、Claude Code / Codex 原生产物以及 Copilot/VS Code、Cursor、Grok Build 等客户端可消费的仓库索引。
 
 ## 当前产品阶段
 
 当前路线聚焦两个阶段：
 
-1. **当前阶段**：持续维护 CLI、`plugin.yaml` 单一事实源、Agent Plugins 1.0 portable core，以及 Copilot/VS Code、Cursor、Claude Code、Codex 客户端分发 adapter。
+1. **当前阶段**：持续维护 CLI、`plugin.yaml` 单一事实源、Agent Plugins 1.0 portable core，以及 Copilot/VS Code、Cursor、Claude Code、Codex、Grok Build 客户端分发 adapter。
 2. **后续扩展**：依据公开且可验证的客户端契约增加 adapter，不把未确认的 Registry 或安装协议预先写进 portable core。
 
 ## 非目标

@@ -75,7 +75,7 @@ under a separate explicit request.
 
 ## Contracts
 
-- Do not edit generated root `plugin.json`/`mcp.json`, `.claude-plugin`, `.codex-plugin`, `.mcp.json`, `.lsp.json`, `hooks/hooks.json`, `.github/plugin/marketplace.json`, `.cursor-plugin/marketplace.json`, root `marketplace.json`, or other generated indexes by hand.
+- Do not edit generated root `plugin.json`/`mcp.json`, `.claude-plugin`, `.codex-plugin`, `.mcp.json`, `.lsp.json`, `hooks/hooks.json`, `.github/plugin/marketplace.json`, `.cursor-plugin/marketplace.json`, `.grok-plugin/marketplace.json`, root `marketplace.json`, or other generated indexes by hand.
 - Keep canonical plugin names to 2–64 lowercase letters, digits, or single hyphens; start and end with an alphanumeric character and never use consecutive `--`.
 - Keep component paths relative to the plugin directory.
 - Keep every portable Skill at `skills/<name>/SKILL.md`; its frontmatter `name` must match the immediate parent directory and its `description` must be present.

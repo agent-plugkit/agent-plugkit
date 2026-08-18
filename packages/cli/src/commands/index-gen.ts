@@ -6,6 +6,7 @@
  * GitHub Copilot / VS Code: 生成 .github/plugin/marketplace.json
  * 根 marketplace.json: 生成 Copilot 优先查找路径所需的兼容镜像
  * Cursor: 生成 .cursor-plugin/marketplace.json
+ * Grok Build: 生成 .grok-plugin/marketplace.json
  */
 
 import chalk from 'chalk';
@@ -38,6 +39,7 @@ export function runIndexGen(options: { root?: string } = {}): void {
   console.log(chalk.green('  ✓ .agents/plugins/marketplace.json (Codex)'));
   console.log(chalk.green('  ✓ .github/plugin/marketplace.json (GitHub Copilot / VS Code)'));
   console.log(chalk.green('  ✓ .cursor-plugin/marketplace.json (Cursor)'));
+  console.log(chalk.green('  ✓ .grok-plugin/marketplace.json (Grok Build)'));
   console.log(chalk.green('  ✓ marketplace.json (GitHub Copilot 优先路径兼容镜像)'));
   console.log(chalk.green('  ✓ plugins/CATALOG.md'));
 

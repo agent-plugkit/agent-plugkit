@@ -27,11 +27,12 @@
 请选择要注册 Marketplace 的 agent：
   1. Claude Code       [可自动]
   2. Codex             [可自动]
-  3. GitHub Copilot    [缺少 CLI]
-  4. VS Code           [可自动]
-  5. Cursor            [需手动]
+  3. Grok Build        [可自动]
+  4. GitHub Copilot    [缺少 CLI]
+  5. VS Code           [可自动]
+  6. Cursor            [需手动]
 
-默认：1,2,4
+默认：1,2,3,5
 输入编号（逗号分隔），输入 all 选择全部，直接回车接受默认：
 ```
 

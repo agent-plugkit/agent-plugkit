@@ -4,7 +4,7 @@
 
 ## 产品与边界
 
-本项目帮助：AI agent plugin marketplace 的维护者，以 `plugin.yaml` 单一事实来源生成 Agent Plugins 1.0 可移植包、Claude Code / Codex 原生 manifest、Copilot/VS Code / Cursor 等客户端 marketplace index 和本地发布包，为已就绪来源执行多客户端 Marketplace 注册，并提供脚手架与验证闭环。
+本项目帮助：AI agent plugin marketplace 的维护者，以 `plugin.yaml` 单一事实来源生成 Agent Plugins 1.0 可移植包、Claude Code / Codex 原生 manifest、Copilot/VS Code / Cursor / Grok Build 等客户端 marketplace index 和本地发布包，为已就绪来源执行多客户端 Marketplace 注册，并提供脚手架与验证闭环。
 
 非目标：不做规则同步器（Ruler/LNAI 方向）、不做内容型插件市场、第一阶段不公开 Node library API。长期路线见 `docs/product/idea-brief.md`。
 
