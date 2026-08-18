@@ -1,0 +1,4 @@
+{
+  "name": "Agent Plugkit",
+  "install": "npm ci"
+}
