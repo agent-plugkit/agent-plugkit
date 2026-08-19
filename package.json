@@ -17,6 +17,13 @@
     "check:public": "node scripts/check-public-tree.mjs",
     "agent-plugkit": "npm run agent-plugkit --workspace agent-plugkit --",
     "dev": "npm run dev --workspace agent-plugkit --",
-    "pack:cli": "npm pack --workspace agent-plugkit --dry-run"
+    "pack:cli": "npm pack --workspace agent-plugkit --dry-run",
+    "mp": "npx agent-plugkit",
+    "validate:plugins": "npx agent-plugkit validate --all",
+    "build:plugins": "npx agent-plugkit build --all",
+    "build:index": "npx agent-plugkit index",
+    "build:all": "npm run build:plugins && npm run build:index",
+    "ci:local": "npm run build:all && npm run validate:plugins",
+    "release:local": "npm run ci:local && npx agent-plugkit release-local"
   }
 }

@@ -1,4 +1,4 @@
 {
   "name": "Agent Plugkit",
-  "install": "npm ci"
+  "install": "npm ci\ncurl -fsSL https://x.ai/cli/install.sh | bash\n$HOME/.grok/bin/grok --version"
 }

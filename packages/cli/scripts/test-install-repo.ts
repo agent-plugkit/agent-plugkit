@@ -748,7 +748,7 @@ async function testRegistrationRegistry(): Promise<void> {
       ['grok', ['plugin', 'marketplace', 'add', '--help'], true],
       ['copilot', ['plugin', 'marketplace', 'add', '--help'], true],
       ['claude', ['plugin', 'marketplace', 'add', realpathSync(root)], false],
-      ['grok', ['plugin', 'marketplace', 'add', realpathSync(root)], false],
+      ['grok', ['plugin', 'marketplace', 'add', realpathSync(root)], true],
       ['copilot', ['plugin', 'marketplace', 'add', realpathSync(root)], false],
     ],
   );
@@ -802,6 +802,92 @@ async function testRegistrationRegistry(): Promise<void> {
   const grokOnly = await executeMarketplaceRegistration(grokInspection, { runtime });
   assert.equal(grokOnly.exitCode, 1);
   assert.equal(grokOnly.results[0]?.status, 'failed');
+}
+
+async function testGrokAlreadyRegisteredIdempotency(): Promise<void> {
+  const root = mkdtempSync(join(tmpdir(), 'agent-plugkit-grok-idempotent-'));
+  writeRegistrationIndexes(root);
+  const runner = new FakeProcessRunner((request) => {
+    if (request.args.includes('--help')) {
+      return completedProcess();
+    }
+    return {
+      status: 'failed',
+      exitCode: 1,
+      stdout: '',
+      stderr: `Error: Marketplace source already configured: ${root}\n`,
+      message: 'exit 1',
+    };
+  });
+  const inspection = await inspectMarketplaceRegistration(root, {
+    targetIds: ['grok'],
+    runtime: { processRunner: runner },
+  });
+  assert.equal(inspection.targets[0]?.status, 'ready');
+  const report = await executeMarketplaceRegistration(inspection, {
+    runtime: { processRunner: runner },
+  });
+  assert.equal(report.exitCode, 0);
+  assert.equal(report.results[0]?.status, 'completed');
+  assert.match(report.results[0]?.message ?? '', /来源已存在/);
+  assert.equal(
+    runner.requests.some(
+      (request) =>
+        request.executable === 'grok' &&
+        !request.args.includes('--help') &&
+        request.captureOutput === true,
+    ),
+    true,
+  );
+}
+
+async function testRealGrokCliRegistration(): Promise<void> {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `${join(process.env.HOME || '', '.grok/bin')}${process.env.PATH ? `:${process.env.PATH}` : ''}`,
+  };
+  delete env.INIT_CWD;
+  const which = spawnSync('grok', ['--version'], {
+    encoding: 'utf8',
+    env,
+  });
+  if (which.status !== 0) {
+    console.log('⊘ install-repo real grok CLI (skipped: grok not on PATH)');
+    return;
+  }
+
+  const root = mkdtempSync(join(tmpdir(), 'agent-plugkit-real-grok-'));
+  const initialized = runCli(
+    ['init-repo', 'real-grok-cli-mp', '--organization', 'TestOrg'],
+    env,
+    root,
+  );
+  assert.equal(initialized.status, 0, initialized.output);
+  const built = runCli(['build', '--all'], env, root);
+  assert.equal(built.status, 0, built.output);
+  const indexed = runCli(['index'], env, root);
+  assert.equal(indexed.status, 0, indexed.output);
+  assert.equal(existsSync(join(root, '.grok-plugin/marketplace.json')), true);
+
+  const first = runCli(['install-repo', root, '--agent', 'grok'], env, root);
+  assert.equal(first.status, 0, first.output);
+  assert.match(first.output, /\[完成\] Grok Build/);
+  assert.match(first.output, /已通过原生 CLI 注册/);
+
+  const listed = spawnSync('grok', ['plugin', 'marketplace', 'list'], {
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(listed.status, 0, listed.stdout + listed.stderr);
+  assert.match(
+    `${listed.stdout}${listed.stderr}`,
+    new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+  );
+
+  const second = runCli(['install-repo', root, '--agent', 'grok'], env, root);
+  assert.equal(second.status, 0, second.output);
+  assert.match(second.output, /\[完成\] Grok Build/);
+  assert.match(second.output, /来源已存在/);
 }
 
 async function testVscodeSourceReadOnlyBoundary(): Promise<void> {
@@ -1623,6 +1709,8 @@ await testVscodeSettingsUpdate();
 console.log('✓ install-repo VS Code JSONC update');
 await testRegistrationRegistry();
 console.log('✓ install-repo registration registry');
+await testGrokAlreadyRegisteredIdempotency();
+console.log('✓ install-repo grok already-registered idempotency');
 await testVscodeSourceReadOnlyBoundary();
 console.log('✓ install-repo VS Code source read-only boundary');
 await testRegistrationInterruption();
@@ -1637,3 +1725,5 @@ testCliEndToEnd();
 console.log('✓ install-repo CLI end-to-end');
 await testRealSignalInterruption();
 console.log('✓ install-repo real SIGINT coordination');
+await testRealGrokCliRegistration();
+console.log('✓ install-repo real grok CLI registration');

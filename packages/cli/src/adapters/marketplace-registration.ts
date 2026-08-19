@@ -51,6 +51,10 @@ interface NativeAdapterDefinition {
   readonly executable: string;
   readonly localIndexCandidates: readonly string[];
   readonly missingRecovery: string;
+  /** When true, capture execute stdout/stderr (needed for idempotent failure matching). */
+  readonly captureExecuteOutput?: boolean;
+  /** Failed execute output matching any pattern is treated as already-registered success. */
+  readonly alreadyRegisteredPatterns?: readonly RegExp[];
 }
 
 function runnerFor(runtime?: MarketplaceRegistrationRuntime): ProcessRunner {
@@ -247,7 +251,7 @@ function nativeAdapter(definition: NativeAdapterDefinition): MarketplaceRegistra
       const executed = await runnerFor(runtime).run({
         executable: invocation.executable,
         args: invocation.args,
-        captureOutput: false,
+        captureOutput: definition.captureExecuteOutput === true,
         signal: runtime?.signal,
       });
       if (executed.status === 'completed') {
@@ -276,6 +280,18 @@ function nativeAdapter(definition: NativeAdapterDefinition): MarketplaceRegistra
           status: 'interrupted',
           message: `注册被 ${executed.signal} 中断。`,
           recovery: '确认客户端状态后重新运行命令。',
+          invocation,
+        };
+      }
+      const failureText = `${executed.stdout}\n${executed.stderr}\n${executed.message}`;
+      if (
+        definition.alreadyRegisteredPatterns?.some((pattern) => pattern.test(failureText))
+      ) {
+        return {
+          id: definition.id,
+          label: definition.label,
+          status: 'completed',
+          message: 'Marketplace 已注册（来源已存在）。',
           invocation,
         };
       }
@@ -313,6 +329,9 @@ const grokAdapter = nativeAdapter({
   executable: 'grok',
   localIndexCandidates: ['.grok-plugin/marketplace.json'],
   missingRecovery: '安装或升级 Grok Build CLI，确认 plugin marketplace add 可用后重试。',
+  captureExecuteOutput: true,
+  // Real grok 1.0.5 exits 1 when the same local/git source is already registered.
+  alreadyRegisteredPatterns: [/already configured/i],
 });
 
 const copilotAdapter = nativeAdapter({
