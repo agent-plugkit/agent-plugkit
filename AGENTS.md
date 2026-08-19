@@ -69,3 +69,9 @@
 - 不要为未来 library 或第三平台预先制造浅抽象层（ADR-0001）。
 - 不要把关键决策只留在聊天里；长期决策写入 ADR 或对应权威文档，临时过程留在任务系统。
 - 不要提交内部规格目录、一次性实施报告、候选 manifest、机器环境清单或个人路径。
+
+## Cursor Cloud specific instructions
+
+- 环境 `install` 会安装 Grok Build CLI（`curl -fsSL https://x.ai/cli/install.sh | bash`）；二进制在 `$HOME/.grok/bin/grok`。非登录 shell 需确保该目录在 `PATH` 中。
+- 验证 Grok 注册时，在临时目录运行 `init-repo` / `build` / `index`，再执行 `install-repo <绝对路径> --agent grok`；不要在本仓库根目录执行 `init-repo`（会污染 monorepo 根）。
+- `packages/cli/scripts/test-install-repo.ts` 在检测到 `grok` 可用时会跑真实 CLI smoke；缺 CLI 时自动跳过。
