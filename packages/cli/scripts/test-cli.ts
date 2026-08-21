@@ -877,11 +877,47 @@ function testBuildIndexValidateAndRelease(): void {
     readFileSync(join(root, 'marketplace.json'), 'utf8'),
     readFileSync(copilotMarketplacePath, 'utf8'),
   );
+  const grokMarketplacePath = join(root, '.grok-plugin/marketplace.json');
+  const grokMarketplace = {
+    name: 'fixture-marketplace',
+    description: 'Fixture marketplace',
+    owner: { name: 'Fixture Team' },
+    plugins: [
+      {
+        name: 'demo-skill',
+        source: { type: 'local', path: './plugins/demo-skill' },
+        description: 'Demo skill plugin',
+        version: '0.1.0',
+        author: { name: 'Fixture Team' },
+        category: 'tooling',
+        tags: ['demo'],
+        keywords: ['demo'],
+      },
+      {
+        name: 'full-plugin',
+        source: { type: 'local', path: './plugins/full-plugin' },
+        description: 'Full plugin',
+        version: '0.1.0',
+        author: {
+          name: 'Fixture Team',
+          email: 'plugins@example.com',
+          url: 'https://example.com/plugins',
+        },
+        category: 'tooling',
+        tags: ['demo', 'portable'],
+        keywords: ['demo', 'portable'],
+        homepage: 'https://example.com/full-plugin',
+      },
+    ],
+  };
+  assert.deepEqual(readJson(grokMarketplacePath), grokMarketplace);
   const copilotMarketplaceBytes = readFileSync(copilotMarketplacePath, 'utf8');
   const cursorMarketplaceBytes = readFileSync(cursorMarketplacePath, 'utf8');
+  const grokMarketplaceBytes = readFileSync(grokMarketplacePath, 'utf8');
   assertOk(runCli(root, ['index']), 'repeat index');
   assert.equal(readFileSync(copilotMarketplacePath, 'utf8'), copilotMarketplaceBytes);
   assert.equal(readFileSync(cursorMarketplacePath, 'utf8'), cursorMarketplaceBytes);
+  assert.equal(readFileSync(grokMarketplacePath, 'utf8'), grokMarketplaceBytes);
   assertOk(runCli(root, ['validate', '--all']), 'validate all');
 
   const codexManifest = readJson(
@@ -907,6 +943,7 @@ function testBuildIndexValidateAndRelease(): void {
   assert.equal(existsSync(join(root, '.agents/plugins/marketplace.json')), true);
   assert.equal(existsSync(copilotMarketplacePath), true);
   assert.equal(existsSync(cursorMarketplacePath), true);
+  assert.equal(existsSync(grokMarketplacePath), true);
   assert.equal(existsSync(join(root, 'marketplace.json')), true);
   assert.equal(existsSync(join(root, 'plugins/CATALOG.md')), true);
   assert.equal(existsSync(join(root, '.openspec-plugin')), false);
@@ -955,6 +992,7 @@ function testBuildIndexValidateAndRelease(): void {
   assert.ok(releaseFiles.includes('README.md'));
   assert.ok(releaseFiles.includes('.github/plugin/marketplace.json'));
   assert.ok(releaseFiles.includes('.cursor-plugin/marketplace.json'));
+  assert.ok(releaseFiles.includes('.grok-plugin/marketplace.json'));
   assert.ok(releaseFiles.includes('plugins/demo-skill/plugin.json'));
   assert.ok(releaseFiles.includes('plugins/full-plugin/mcp.json'));
   assert.equal(releaseFiles.some((file) => file.includes('.openspec-plugin')), false);

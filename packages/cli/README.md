@@ -64,6 +64,7 @@ npx agent-plugkit --root /path/to/marketplace validate --all
 ├── .cursor-plugin/marketplace.json
 ├── .claude-plugin/marketplace.json
 ├── .agents/plugins/marketplace.json
+├── .grok-plugin/marketplace.json
 └── marketplace.json
 ```
 
@@ -134,14 +135,16 @@ npx agent-plugkit install-repo /absolute/path/to/marketplace --all
 
 Without `--agent` or `--all`, an interactive terminal shows a numbered multi-select and defaults to
 the targets that can currently be handled automatically. Non-interactive callers must pass an
-explicit selection. Target IDs are `claude`, `codex`, `copilot`, `vscode`, and `cursor`; repeated
-`--agent` values are deduplicated and `--all` includes Cursor.
+explicit selection. Target IDs are `claude`, `codex`, `grok`, `copilot`, `vscode`, and `cursor`;
+repeated `--agent` values are deduplicated and `--all` includes Cursor.
 
 Client behavior is deliberately adapter-specific:
 
-- Claude Code runs `claude plugin marketplace add <source>` after probing that exact command.
-- Codex runs `codex plugin marketplace add <source>` after probing that exact command.
-- GitHub Copilot runs `copilot plugin marketplace add <source>` after probing that exact command.
+- Claude Code, Codex, Grok Build, and GitHub Copilot share one native registration path: probe
+  `plugin marketplace add --help`, then `plugin marketplace list --json` and skip `add` when the
+  source already matches by path/URL/repo (not marketplace name alone). If list is unavailable or
+  does not match, they run `plugin marketplace add <source>`; residual “already configured /
+  already added / already on disk” failures still count as completed.
 - VS Code atomically updates the current user's JSONC `settings.json`, enables
   `chat.plugins.enabled`, and deduplicates `chat.plugins.marketplaces`. Local directories are stored
   as `file://` URIs. Comments, trailing commas, indentation, unrelated settings, and the existing
@@ -194,6 +197,12 @@ The generated indexes still support direct client flows when needed:
 
 - Cursor Team/Enterprise can use Dashboard → Plugins → Add Marketplace → Import from Repo. Cursor detects the root Agent Plugins `plugin.json` for entries referenced by `.cursor-plugin/marketplace.json`.
 
+- Grok Build registers a marketplace that already has `.grok-plugin/marketplace.json`:
+
+  ```bash
+  grok plugin marketplace add OWNER/REPO
+  ```
+
 `install-repo` performs only current-user Marketplace registration or VS Code configuration. It
 does not push or publish a Git repository, build or modify the source, install a missing client CLI,
 import into Cursor automatically, or install any plugin from the Marketplace. `release-local` only
@@ -231,6 +240,7 @@ npx agent-plugkit import-skill ~/.claude/skills/dataviz custom-name --descriptio
 - `.cursor-plugin/marketplace.json`
 - `.claude-plugin/marketplace.json`
 - `.agents/plugins/marketplace.json`
+- `.grok-plugin/marketplace.json`
 - `marketplace.json`
 - `plugins/CATALOG.md`
 

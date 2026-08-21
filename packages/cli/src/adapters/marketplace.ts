@@ -101,6 +101,49 @@ export function buildCodexMarketplace(
   };
 }
 
+/**
+ * Grok Build marketplace index (`.grok-plugin/marketplace.json`).
+ * Local sources use `{ type: "local", path }` per xAI plugin-marketplace catalog format.
+ */
+export function buildGrokMarketplace(
+  marketplace: MarketplaceMetadata,
+  plugins: readonly MarketplacePluginSource[],
+): unknown {
+  const displayName = toTitleCase(marketplace.name);
+  return {
+    name: marketplace.name,
+    ...(marketplace.description === undefined
+      ? {}
+      : { description: marketplace.description }),
+    owner: {
+      name: marketplace.organization || displayName,
+    },
+    plugins: plugins.map(({ directoryName, config }) => ({
+      name: config.name,
+      source: {
+        type: 'local',
+        path: `./plugins/${directoryName}`,
+      },
+      description: config.description,
+      version: config.version,
+      author: {
+        name: config.author.name,
+        ...(typeof config.author.email === 'string'
+          ? { email: config.author.email }
+          : {}),
+        ...(typeof config.author.url === 'string'
+          ? { url: config.author.url }
+          : {}),
+      },
+      ...(config.category === undefined ? {} : { category: config.category }),
+      ...(config.tags?.length ? { tags: config.tags, keywords: config.tags } : {}),
+      ...(typeof config.homepage === 'string'
+        ? { homepage: config.homepage }
+        : {}),
+    })),
+  };
+}
+
 function componentLabels(config: PluginYaml): string[] {
   const labels: string[] = [];
   if (config.components.skills?.length) labels.push("Skill");

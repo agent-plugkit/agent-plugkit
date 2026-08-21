@@ -46,11 +46,138 @@ export interface MarketplaceRegistrationAdapter {
 }
 
 interface NativeAdapterDefinition {
-  readonly id: 'claude' | 'codex' | 'copilot';
+  readonly id: 'claude' | 'codex' | 'copilot' | 'grok';
   readonly label: string;
   readonly executable: string;
   readonly localIndexCandidates: readonly string[];
   readonly missingRecovery: string;
+}
+
+/** Shared fallback when a client still fails add after list preflight. */
+const ALREADY_REGISTERED_PATTERNS = [
+  /already configured/i,
+  /already added/i,
+  /already on disk/i,
+] as const;
+
+const SOURCE_CANDIDATE_KEYS = new Set([
+  'path',
+  'url',
+  'repo',
+  'root',
+  'source',
+  'repository',
+]);
+
+/**
+ * Normalize a marketplace source string so local paths and GitHub shorthand /
+ * HTTPS / SSH forms of the same repo can be compared across client list JSON.
+ */
+export function normalizeMarketplaceSourceKey(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return '';
+  }
+  const githubHttps = trimmed.match(
+    /^https?:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/#?]+?)(?:\.git)?\/?(?:#.*)?$/i,
+  );
+  if (githubHttps) {
+    return `github:${githubHttps[1].toLowerCase()}/${githubHttps[2].toLowerCase()}`;
+  }
+  const githubSsh = trimmed.match(
+    /^(?:ssh:\/\/)?git@github\.com[:/]([^/]+)\/([^/#?]+?)(?:\.git)?\/?$/i,
+  );
+  if (githubSsh) {
+    return `github:${githubSsh[1].toLowerCase()}/${githubSsh[2].toLowerCase()}`;
+  }
+  const shorthand = trimmed.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)(?:#.*)?$/);
+  if (
+    shorthand &&
+    !trimmed.includes(':') &&
+    !trimmed.startsWith('.') &&
+    !trimmed.startsWith('/') &&
+    !/^[A-Za-z]:[\\/]/.test(trimmed)
+  ) {
+    return `github:${shorthand[1].toLowerCase()}/${shorthand[2].toLowerCase()}`;
+  }
+  if (
+    trimmed === '.' ||
+    trimmed === '..' ||
+    trimmed.startsWith('./') ||
+    trimmed.startsWith('../') ||
+    trimmed.startsWith('/') ||
+    /^[A-Za-z]:[\\/]/.test(trimmed)
+  ) {
+    try {
+      return `local:${realpathSync(resolve(trimmed))}`;
+    } catch {
+      return `local:${resolve(trimmed)}`;
+    }
+  }
+  const withoutGit = trimmed.replace(/\.git$/i, '').replace(/\/$/, '');
+  return `other:${withoutGit.toLowerCase()}`;
+}
+
+function collectMarketplaceSourceCandidates(
+  value: unknown,
+  out: string[],
+  parentKey?: string,
+): void {
+  if (typeof value === 'string') {
+    if (
+      parentKey === undefined ||
+      SOURCE_CANDIDATE_KEYS.has(parentKey) ||
+      parentKey.endsWith('Path') ||
+      parentKey.endsWith('Url') ||
+      parentKey.endsWith('Repo')
+    ) {
+      if (value.trim().length > 0) {
+        out.push(value);
+      }
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectMarketplaceSourceCandidates(item, out, parentKey);
+    }
+    return;
+  }
+  if (value && typeof value === 'object') {
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      collectMarketplaceSourceCandidates(child, out, key);
+    }
+  }
+}
+
+/** True when list --json output already contains the registration source. */
+export function marketplaceListContainsSource(
+  listJsonText: string,
+  source: MarketplaceRegistrationSource,
+): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(listJsonText);
+  } catch {
+    return false;
+  }
+  const candidates: string[] = [];
+  collectMarketplaceSourceCandidates(parsed, candidates);
+  const wanted = new Set(
+    [source.clientValue, source.displayValue, source.input]
+      .map((value) => normalizeMarketplaceSourceKey(value))
+      .filter((value) => value.length > 0),
+  );
+  if (source.kind === 'local') {
+    wanted.add(normalizeMarketplaceSourceKey(source.localPath));
+  }
+  for (const candidate of candidates) {
+    const key = normalizeMarketplaceSourceKey(candidate);
+    if (key.length > 0 && wanted.has(key)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function runnerFor(runtime?: MarketplaceRegistrationRuntime): ProcessRunner {
@@ -244,10 +371,48 @@ function nativeAdapter(definition: NativeAdapterDefinition): MarketplaceRegistra
         executable: definition.executable,
         args: ['plugin', 'marketplace', 'add', source.clientValue],
       };
+      const listed = await runnerFor(runtime).run({
+        executable: definition.executable,
+        args: ['plugin', 'marketplace', 'list', '--json'],
+        captureOutput: true,
+        signal: runtime?.signal,
+      });
+      if (listed.status === 'interrupted') {
+        return {
+          id: definition.id,
+          label: definition.label,
+          status: 'interrupted',
+          message: `注册前 list 被 ${listed.signal} 中断。`,
+          recovery: '确认客户端状态后重新运行命令。',
+          invocation,
+        };
+      }
+      if (listed.status === 'missing') {
+        return {
+          id: definition.id,
+          label: definition.label,
+          status: 'missing-cli',
+          message: `执行前未找到 ${definition.executable} CLI。`,
+          recovery: definition.missingRecovery,
+          invocation,
+        };
+      }
+      if (
+        listed.status === 'completed' &&
+        marketplaceListContainsSource(listed.stdout, source)
+      ) {
+        return {
+          id: definition.id,
+          label: definition.label,
+          status: 'completed',
+          message: 'Marketplace 已注册（list 预检命中）。',
+          invocation,
+        };
+      }
       const executed = await runnerFor(runtime).run({
         executable: invocation.executable,
         args: invocation.args,
-        captureOutput: false,
+        captureOutput: true,
         signal: runtime?.signal,
       });
       if (executed.status === 'completed') {
@@ -279,6 +444,16 @@ function nativeAdapter(definition: NativeAdapterDefinition): MarketplaceRegistra
           invocation,
         };
       }
+      const failureText = `${executed.stdout}\n${executed.stderr}\n${executed.message}`;
+      if (ALREADY_REGISTERED_PATTERNS.some((pattern) => pattern.test(failureText))) {
+        return {
+          id: definition.id,
+          label: definition.label,
+          status: 'completed',
+          message: 'Marketplace 已注册（来源已存在）。',
+          invocation,
+        };
+      }
       return {
         id: definition.id,
         label: definition.label,
@@ -305,6 +480,14 @@ const codexAdapter = nativeAdapter({
   executable: 'codex',
   localIndexCandidates: ['.agents/plugins/marketplace.json'],
   missingRecovery: '安装或升级 Codex CLI，确认 plugin marketplace add 可用后重试。',
+});
+
+const grokAdapter = nativeAdapter({
+  id: 'grok',
+  label: 'Grok Build',
+  executable: 'grok',
+  localIndexCandidates: ['.grok-plugin/marketplace.json'],
+  missingRecovery: '安装或升级 Grok Build CLI，确认 plugin marketplace add 可用后重试。',
 });
 
 const copilotAdapter = nativeAdapter({
@@ -443,6 +626,7 @@ const cursorAdapter: MarketplaceRegistrationAdapter = {
 export const MARKETPLACE_REGISTRATION_ADAPTERS: readonly MarketplaceRegistrationAdapter[] = [
   claudeAdapter,
   codexAdapter,
+  grokAdapter,
   copilotAdapter,
   vscodeAdapter,
   cursorAdapter,

@@ -21,6 +21,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse } from 'jsonc-parser';
 import {
+  marketplaceListContainsSource,
+  normalizeMarketplaceSourceKey,
+} from '../src/adapters/marketplace-registration.js';
+import {
   executeMarketplaceRegistration,
   inspectMarketplaceRegistration,
   normalizeMarketplaceSource,
@@ -673,6 +677,7 @@ function writeRegistrationIndexes(root: string): void {
     '.agents/plugins/marketplace.json',
     '.github/plugin/marketplace.json',
     '.cursor-plugin/marketplace.json',
+    '.grok-plugin/marketplace.json',
     'marketplace.json',
   ]) {
     const path = join(root, relativePath);
@@ -709,13 +714,14 @@ async function testRegistrationRegistry(): Promise<void> {
       return { status: 'completed' as const, changed: true, settingsPath };
     },
   };
-  const targetIds: AgentTargetId[] = ['claude', 'codex', 'copilot', 'vscode', 'cursor'];
+  const targetIds: AgentTargetId[] = ['claude', 'codex', 'grok', 'copilot', 'vscode', 'cursor'];
   const inspection = await inspectMarketplaceRegistration(root, { targetIds, runtime });
   assert.deepEqual(
     inspection.targets.map((target) => [target.id, target.status]),
     [
       ['claude', 'ready'],
       ['codex', 'missing-cli'],
+      ['grok', 'ready'],
       ['copilot', 'ready'],
       ['vscode', 'ready'],
       ['cursor', 'manual-required'],
@@ -729,6 +735,7 @@ async function testRegistrationRegistry(): Promise<void> {
     [
       ['claude', 'completed'],
       ['codex', 'missing-cli'],
+      ['grok', 'completed'],
       ['copilot', 'failed'],
       ['vscode', 'completed'],
       ['cursor', 'manual-required'],
@@ -742,9 +749,14 @@ async function testRegistrationRegistry(): Promise<void> {
     [
       ['claude', ['plugin', 'marketplace', 'add', '--help'], true],
       ['codex', ['plugin', 'marketplace', 'add', '--help'], true],
+      ['grok', ['plugin', 'marketplace', 'add', '--help'], true],
       ['copilot', ['plugin', 'marketplace', 'add', '--help'], true],
-      ['claude', ['plugin', 'marketplace', 'add', realpathSync(root)], false],
-      ['copilot', ['plugin', 'marketplace', 'add', realpathSync(root)], false],
+      ['claude', ['plugin', 'marketplace', 'list', '--json'], true],
+      ['claude', ['plugin', 'marketplace', 'add', realpathSync(root)], true],
+      ['grok', ['plugin', 'marketplace', 'list', '--json'], true],
+      ['grok', ['plugin', 'marketplace', 'add', realpathSync(root)], true],
+      ['copilot', ['plugin', 'marketplace', 'list', '--json'], true],
+      ['copilot', ['plugin', 'marketplace', 'add', realpathSync(root)], true],
     ],
   );
   const cursorResult = report.results.find((result) => result.id === 'cursor');
@@ -786,6 +798,193 @@ async function testRegistrationRegistry(): Promise<void> {
   const cursorOnly = await executeMarketplaceRegistration(cursorInspection, { runtime });
   assert.equal(cursorOnly.exitCode, 1);
   assert.equal(cursorOnly.results[0]?.status, 'failed');
+
+  const missingGrokRoot = mkdtempSync(join(tmpdir(), 'agent-plugkit-grok-index-'));
+  const grokInspection = await inspectMarketplaceRegistration(missingGrokRoot, {
+    targetIds: ['grok'],
+    runtime,
+  });
+  assert.equal(grokInspection.targets[0]?.status, 'failed');
+  assert.match(grokInspection.targets[0]?.message ?? '', /\.grok-plugin\/marketplace\.json/);
+  const grokOnly = await executeMarketplaceRegistration(grokInspection, { runtime });
+  assert.equal(grokOnly.exitCode, 1);
+  assert.equal(grokOnly.results[0]?.status, 'failed');
+}
+
+function testMarketplaceListSourceMatching(): void {
+  const localRoot = mkdtempSync(join(tmpdir(), 'agent-plugkit-list-match-'));
+  const canonical = realpathSync(localRoot);
+  assert.equal(
+    normalizeMarketplaceSourceKey('https://github.com/Owner/Repo.git'),
+    'github:owner/repo',
+  );
+  assert.equal(normalizeMarketplaceSourceKey('Owner/Repo'), 'github:owner/repo');
+  assert.equal(normalizeMarketplaceSourceKey('git@github.com:Owner/Repo.git'), 'github:owner/repo');
+  assert.equal(normalizeMarketplaceSourceKey(canonical), `local:${canonical}`);
+  assert.equal(normalizeMarketplaceSourceKey(localRoot), `local:${canonical}`);
+
+  const localSource = normalizeMarketplaceSource(localRoot, { baseDir: tmpdir() });
+  assert.equal(
+    marketplaceListContainsSource(
+      JSON.stringify([{ name: 'fixture', source: { path: canonical } }]),
+      localSource,
+    ),
+    true,
+  );
+  assert.equal(
+    marketplaceListContainsSource(
+      JSON.stringify([{ name: 'other', source: { path: '/tmp/other-marketplace' } }]),
+      localSource,
+    ),
+    false,
+  );
+
+  const remoteSource = normalizeMarketplaceSource('owner/repo', { baseDir: tmpdir() });
+  assert.equal(
+    marketplaceListContainsSource(
+      JSON.stringify([
+        {
+          name: 'remote',
+          url: 'https://github.com/owner/repo.git',
+        },
+      ]),
+      remoteSource,
+    ),
+    true,
+  );
+  assert.equal(
+    marketplaceListContainsSource(
+      JSON.stringify([{ name: 'remote', repo: 'other/repo' }]),
+      remoteSource,
+    ),
+    false,
+  );
+  assert.equal(marketplaceListContainsSource('not-json', remoteSource), false);
+}
+
+async function testNativeListPrecheckIdempotency(): Promise<void> {
+  const root = mkdtempSync(join(tmpdir(), 'agent-plugkit-native-list-precheck-'));
+  writeRegistrationIndexes(root);
+  const canonical = realpathSync(root);
+
+  for (const agentId of ['claude', 'codex', 'grok', 'copilot'] as const) {
+    const listHitRunner = new FakeProcessRunner((request) => {
+      if (request.args.includes('--help')) {
+        return completedProcess();
+      }
+      if (request.args.includes('list')) {
+        return {
+          status: 'completed',
+          exitCode: 0,
+          stdout: JSON.stringify([
+            { name: 'fixture', kind: 'local', source: { path: canonical } },
+          ]),
+          stderr: '',
+        };
+      }
+      return {
+        status: 'failed',
+        exitCode: 1,
+        stdout: '',
+        stderr: 'should not add when list hits\n',
+        message: 'exit 1',
+      };
+    });
+    const listHitInspection = await inspectMarketplaceRegistration(root, {
+      targetIds: [agentId],
+      runtime: { processRunner: listHitRunner },
+    });
+    assert.equal(listHitInspection.targets[0]?.status, 'ready');
+    const listHitReport = await executeMarketplaceRegistration(listHitInspection, {
+      runtime: { processRunner: listHitRunner },
+    });
+    assert.equal(listHitReport.exitCode, 0, agentId);
+    assert.equal(listHitReport.results[0]?.status, 'completed', agentId);
+    assert.match(listHitReport.results[0]?.message ?? '', /list 预检命中/);
+    assert.equal(
+      listHitRunner.requests.some(
+        (request) =>
+          request.executable === agentId &&
+          request.args.includes('add') &&
+          !request.args.includes('--help') &&
+          !request.args.includes('list'),
+      ),
+      false,
+      agentId,
+    );
+  }
+
+  const fallbackRunner = new FakeProcessRunner((request) => {
+    if (request.args.includes('--help') || request.args.includes('list')) {
+      return completedProcess();
+    }
+    return {
+      status: 'failed',
+      exitCode: 1,
+      stdout: '',
+      stderr: `Error: Marketplace source already configured: ${canonical}\n`,
+      message: 'exit 1',
+    };
+  });
+  const fallbackInspection = await inspectMarketplaceRegistration(root, {
+    targetIds: ['grok'],
+    runtime: { processRunner: fallbackRunner },
+  });
+  const fallbackReport = await executeMarketplaceRegistration(fallbackInspection, {
+    runtime: { processRunner: fallbackRunner },
+  });
+  assert.equal(fallbackReport.exitCode, 0);
+  assert.equal(fallbackReport.results[0]?.status, 'completed');
+  assert.match(fallbackReport.results[0]?.message ?? '', /来源已存在/);
+}
+
+async function testRealGrokCliRegistration(): Promise<void> {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    PATH: `${join(process.env.HOME || '', '.grok/bin')}${process.env.PATH ? `:${process.env.PATH}` : ''}`,
+  };
+  delete env.INIT_CWD;
+  const which = spawnSync('grok', ['--version'], {
+    encoding: 'utf8',
+    env,
+  });
+  if (which.status !== 0) {
+    console.log('⊘ install-repo real grok CLI (skipped: grok not on PATH)');
+    return;
+  }
+
+  const root = mkdtempSync(join(tmpdir(), 'agent-plugkit-real-grok-'));
+  const initialized = runCli(
+    ['init-repo', 'real-grok-cli-mp', '--organization', 'TestOrg'],
+    env,
+    root,
+  );
+  assert.equal(initialized.status, 0, initialized.output);
+  const built = runCli(['build', '--all'], env, root);
+  assert.equal(built.status, 0, built.output);
+  const indexed = runCli(['index'], env, root);
+  assert.equal(indexed.status, 0, indexed.output);
+  assert.equal(existsSync(join(root, '.grok-plugin/marketplace.json')), true);
+
+  const first = runCli(['install-repo', root, '--agent', 'grok'], env, root);
+  assert.equal(first.status, 0, first.output);
+  assert.match(first.output, /\[完成\] Grok Build/);
+  assert.match(first.output, /已通过原生 CLI 注册/);
+
+  const listed = spawnSync('grok', ['plugin', 'marketplace', 'list'], {
+    encoding: 'utf8',
+    env,
+  });
+  assert.equal(listed.status, 0, listed.stdout + listed.stderr);
+  assert.match(
+    `${listed.stdout}${listed.stderr}`,
+    new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+  );
+
+  const second = runCli(['install-repo', root, '--agent', 'grok'], env, root);
+  assert.equal(second.status, 0, second.output);
+  assert.match(second.output, /\[完成\] Grok Build/);
+  assert.match(second.output, /list 预检命中|来源已存在/);
 }
 
 async function testVscodeSourceReadOnlyBoundary(): Promise<void> {
@@ -869,7 +1068,11 @@ async function testRegistrationInterruption(): Promise<void> {
     if (request.executable === 'codex' && request.args.includes('--help')) {
       return { status: 'missing', stdout: '', stderr: '', message: 'ENOENT' };
     }
-    if (!request.args.includes('--help') && request.executable === 'claude') {
+    if (
+      request.executable === 'claude' &&
+      request.args.includes('add') &&
+      !request.args.includes('--help')
+    ) {
       return { status: 'interrupted', signal: 'SIGINT', stdout: '', stderr: '' };
     }
     return completedProcess();
@@ -890,20 +1093,29 @@ async function testRegistrationInterruption(): Promise<void> {
   );
   assert.match(report.results[1]?.recovery ?? '', /安装或升级 Codex CLI/);
   assert.match(report.results[2]?.recovery ?? '', /Dashboard.*Plugins.*Add Marketplace/);
-  assert.equal(
-    runner.requests.filter((request) => !request.args.includes('--help')).length,
-    1,
+  assert.deepEqual(
+    runner.requests
+      .filter((request) => !request.args.includes('--help'))
+      .map((request) => [request.executable, [...request.args]]),
+    [
+      ['claude', ['plugin', 'marketplace', 'list', '--json']],
+      ['claude', ['plugin', 'marketplace', 'add', 'owner/repo']],
+    ],
   );
 }
 
 async function testInspectionInterruption(): Promise<void> {
   let addCalls = 0;
   const runner = new FakeProcessRunner((request) => {
-    if (!request.args.includes('--help')) {
+    if (
+      request.args.includes('add') &&
+      !request.args.includes('--help') &&
+      !request.args.includes('list')
+    ) {
       addCalls += 1;
       return completedProcess();
     }
-    if (request.executable === 'codex') {
+    if (request.executable === 'codex' && request.args.includes('--help')) {
       return { status: 'interrupted', signal: 'SIGINT', stdout: '', stderr: '' };
     }
     return completedProcess();
@@ -932,21 +1144,21 @@ async function testInspectionInterruption(): Promise<void> {
 
 async function testCommandSelectionAndPresentation(): Promise<void> {
   assert.deepEqual(
-    parseTargetSelection('3, 1, 1', ['claude', 'codex', 'copilot', 'vscode', 'cursor'], [
+    parseTargetSelection('4, 1, 1', ['claude', 'codex', 'grok', 'copilot', 'vscode', 'cursor'], [
       'claude',
     ]),
     ['claude', 'copilot'],
   );
   assert.deepEqual(
-    parseTargetSelection('', ['claude', 'codex', 'copilot', 'vscode', 'cursor'], [
+    parseTargetSelection('', ['claude', 'codex', 'grok', 'copilot', 'vscode', 'cursor'], [
       'claude',
       'vscode',
     ]),
     ['claude', 'vscode'],
   );
   assert.deepEqual(
-    parseTargetSelection('all', ['claude', 'codex', 'copilot', 'vscode', 'cursor'], []),
-    ['claude', 'codex', 'copilot', 'vscode', 'cursor'],
+    parseTargetSelection('all', ['claude', 'codex', 'grok', 'copilot', 'vscode', 'cursor'], []),
+    ['claude', 'codex', 'grok', 'copilot', 'vscode', 'cursor'],
   );
   expectThrows(
     () => parseTargetSelection('1-3', ['claude', 'codex'], ['claude']),
@@ -1066,6 +1278,7 @@ async function testCommandSelectionAndPresentation(): Promise<void> {
   assert.deepEqual(prompted.report?.results.map((item) => item.id), [
     'claude',
     'codex',
+    'grok',
     'copilot',
     'vscode',
   ]);
@@ -1092,6 +1305,7 @@ async function testCommandSelectionAndPresentation(): Promise<void> {
   assert.deepEqual(allTargets.report?.results.map((item) => item.id), [
     'claude',
     'codex',
+    'grok',
     'copilot',
     'vscode',
     'cursor',
@@ -1226,6 +1440,10 @@ if (args.includes('--help')) {
     process.stdout.write(name === 'code' ? 'Visual Studio Code 1.100.0\\n' : name + ' marketplace help\\n');
     process.exit(0);
   }
+}
+if (args.includes('list')) {
+  process.stdout.write('[]\\n');
+  process.exit(0);
 }
 if (mode === 'fail') {
   process.stderr.write('registration rejected\\n');
@@ -1385,7 +1603,9 @@ function testCliEndToEnd(): void {
   assert.deepEqual(readFakeCalls(completeFixture.logPath), [
     { name: 'claude', args: ['plugin', 'marketplace', 'add', '--help'] },
     { name: 'codex', args: ['plugin', 'marketplace', 'add', '--help'] },
+    { name: 'claude', args: ['plugin', 'marketplace', 'list', '--json'] },
     { name: 'claude', args: ['plugin', 'marketplace', 'add', 'owner/repo'] },
+    { name: 'codex', args: ['plugin', 'marketplace', 'list', '--json'] },
     { name: 'codex', args: ['plugin', 'marketplace', 'add', 'owner/repo'] },
   ]);
 
@@ -1437,7 +1657,10 @@ function testCliEndToEnd(): void {
   assert.match(interrupted.output, /因前序目标中断未执行/);
   assert.deepEqual(
     readFakeCalls(interruptedFixture.logPath).filter((call) => !call.args.includes('--help')),
-    [{ name: 'claude', args: ['plugin', 'marketplace', 'add', 'owner/repo'] }],
+    [
+      { name: 'claude', args: ['plugin', 'marketplace', 'list', '--json'] },
+      { name: 'claude', args: ['plugin', 'marketplace', 'add', 'owner/repo'] },
+    ],
   );
 
   const invalidTarget = runCli(
@@ -1537,7 +1760,11 @@ async function testRealSignalInterruption(): Promise<void> {
     registrationFixture.env,
     () =>
       readFakeCalls(registrationFixture.logPath).some(
-        (call) => call.name === 'claude' && !call.args.includes('--help'),
+        (call) =>
+          call.name === 'claude' &&
+          call.args.includes('add') &&
+          !call.args.includes('--help') &&
+          !call.args.includes('list'),
       ),
   );
   assert.equal(registration.signal, null, registration.output);
@@ -1547,7 +1774,10 @@ async function testRealSignalInterruption(): Promise<void> {
   assert.match(registration.output, /未完成/);
   assert.deepEqual(
     readFakeCalls(registrationFixture.logPath).filter((call) => !call.args.includes('--help')),
-    [{ name: 'claude', args: ['plugin', 'marketplace', 'add', 'owner/repo'] }],
+    [
+      { name: 'claude', args: ['plugin', 'marketplace', 'list', '--json'] },
+      { name: 'claude', args: ['plugin', 'marketplace', 'add', 'owner/repo'] },
+    ],
   );
 
   const probeFixture = fakeCliEnvironment(['claude', 'codex']);
@@ -1575,7 +1805,11 @@ async function testRealSignalInterruption(): Promise<void> {
     ignoringRegistrationFixture.env,
     () =>
       readFakeCalls(ignoringRegistrationFixture.logPath).some(
-        (call) => call.name === 'claude' && !call.args.includes('--help'),
+        (call) =>
+          call.name === 'claude' &&
+          call.args.includes('add') &&
+          !call.args.includes('--help') &&
+          !call.args.includes('list'),
       ),
   );
   assert.equal(ignoringRegistration.signal, null, ignoringRegistration.output);
@@ -1605,6 +1839,10 @@ await testVscodeSettingsUpdate();
 console.log('✓ install-repo VS Code JSONC update');
 await testRegistrationRegistry();
 console.log('✓ install-repo registration registry');
+testMarketplaceListSourceMatching();
+console.log('✓ install-repo marketplace list source matching');
+await testNativeListPrecheckIdempotency();
+console.log('✓ install-repo native list precheck idempotency');
 await testVscodeSourceReadOnlyBoundary();
 console.log('✓ install-repo VS Code source read-only boundary');
 await testRegistrationInterruption();
@@ -1619,3 +1857,5 @@ testCliEndToEnd();
 console.log('✓ install-repo CLI end-to-end');
 await testRealSignalInterruption();
 console.log('✓ install-repo real SIGINT coordination');
+await testRealGrokCliRegistration();
+console.log('✓ install-repo real grok CLI registration');

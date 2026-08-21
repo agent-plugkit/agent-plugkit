@@ -21,6 +21,7 @@ import {
   buildCodexMarketplace,
   buildCursorMarketplace,
   buildGithubCopilotMarketplace,
+  buildGrokMarketplace,
   buildMarketplaceCatalog,
 } from "../adapters/marketplace.js";
 import {
@@ -48,6 +49,7 @@ export type ArtifactPlatform =
   | "codex"
   | "cursor"
   | "github-copilot"
+  | "grok"
   | "shared";
 export type ArtifactType =
   | "plugin-manifest"
@@ -392,6 +394,7 @@ export function planMarketplaceIndex(
   const codexPath = ".agents/plugins/marketplace.json";
   const githubCopilotPath = ".github/plugin/marketplace.json";
   const cursorPath = ".cursor-plugin/marketplace.json";
+  const grokPath = ".grok-plugin/marketplace.json";
   const mirrorPath = "marketplace.json";
   const catalogPath = "plugins/CATALOG.md";
   const claude = jsonBytes(buildClaudeMarketplace(marketplace, plugins));
@@ -400,6 +403,7 @@ export function planMarketplaceIndex(
     buildGithubCopilotMarketplace(marketplace, plugins),
   );
   const cursor = jsonBytes(buildCursorMarketplace(marketplace, plugins));
+  const grok = jsonBytes(buildGrokMarketplace(marketplace, plugins));
   const catalog = textBytes(buildMarketplaceCatalog(plugins));
   const source = {
     kind: "marketplace" as const,
@@ -434,6 +438,13 @@ export function planMarketplaceIndex(
       type: "marketplace-index",
       relativePath: cursorPath,
       bytes: cursor,
+    },
+    {
+      source,
+      platform: "grok",
+      type: "marketplace-index",
+      relativePath: grokPath,
+      bytes: grok,
     },
     {
       source,

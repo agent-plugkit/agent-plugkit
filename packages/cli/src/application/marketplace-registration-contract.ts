@@ -1,6 +1,7 @@
 export const AGENT_TARGET_IDS = [
   'claude',
   'codex',
+  'grok',
   'copilot',
   'vscode',
   'cursor',

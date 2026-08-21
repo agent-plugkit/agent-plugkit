@@ -368,6 +368,7 @@ function releaseReadme(
 - \`.cursor-plugin/marketplace.json\`: Cursor marketplace manifest
 - \`.claude-plugin/marketplace.json\`: Claude Code marketplace manifest
 - \`.agents/plugins/marketplace.json\`: Codex repo marketplace manifest
+- \`.grok-plugin/marketplace.json\`: Grok Build marketplace manifest
 - \`marketplace.json\`: GitHub Copilot 优先查找路径使用的根目录兼容镜像（Codex 继续使用 \`.agents/plugins/marketplace.json\`）
 - \`marketplace.yaml\`: marketplace 元数据
 - \`release-manifest.json\`: 本次发布包的元信息
@@ -502,6 +503,11 @@ function sourceSnapshotEntries(workspaceDirectory: string): ReleaseSnapshotEntry
     ".agents/plugins/marketplace.json",
     "Codex marketplace manifest",
   );
+  readRequiredFile(
+    workspaceDirectory,
+    ".grok-plugin/marketplace.json",
+    "Grok Build marketplace manifest",
+  );
   assertHistoricalGeneratedOutputs(workspaceDirectory);
   return [
     ...walkExpectedTree(workspaceDirectory, "plugins"),
@@ -510,6 +516,7 @@ function sourceSnapshotEntries(workspaceDirectory: string): ReleaseSnapshotEntry
     ...walkExpectedTree(workspaceDirectory, ".cursor-plugin"),
     ...walkExpectedTree(workspaceDirectory, ".claude-plugin"),
     ...walkExpectedTree(workspaceDirectory, ".agents"),
+    ...walkExpectedTree(workspaceDirectory, ".grok-plugin"),
     readRequiredFile(
       workspaceDirectory,
       "marketplace.json",
@@ -701,6 +708,7 @@ export function planLocalRelease(
       cursorMarketplace: ".cursor-plugin/marketplace.json",
       claudeMarketplace: ".claude-plugin/marketplace.json",
       codexMarketplace: ".agents/plugins/marketplace.json",
+      grokMarketplace: ".grok-plugin/marketplace.json",
       marketplaceMirror: "marketplace.json",
       marketplaceMetadata: "marketplace.yaml",
     },

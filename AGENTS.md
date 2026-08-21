@@ -4,7 +4,7 @@
 
 ## 产品与边界
 
-本项目帮助：AI agent plugin marketplace 的维护者，以 `plugin.yaml` 单一事实来源生成 Agent Plugins 1.0 可移植包、Claude Code / Codex 原生 manifest、Copilot/VS Code / Cursor 等客户端 marketplace index 和本地发布包，为已就绪来源执行多客户端 Marketplace 注册，并提供脚手架与验证闭环。
+本项目帮助：AI agent plugin marketplace 的维护者，以 `plugin.yaml` 单一事实来源生成 Agent Plugins 1.0 可移植包、Claude Code / Codex 原生 manifest、Copilot/VS Code / Cursor / Grok Build 等客户端 marketplace index 和本地发布包，为已就绪来源执行多客户端 Marketplace 注册，并提供脚手架与验证闭环。
 
 非目标：不做规则同步器（Ruler/LNAI 方向）、不做内容型插件市场、第一阶段不公开 Node library API。长期路线见 `docs/product/idea-brief.md`。
 
@@ -69,3 +69,9 @@
 - 不要为未来 library 或第三平台预先制造浅抽象层（ADR-0001）。
 - 不要把关键决策只留在聊天里；长期决策写入 ADR 或对应权威文档，临时过程留在任务系统。
 - 不要提交内部规格目录、一次性实施报告、候选 manifest、机器环境清单或个人路径。
+
+## Cursor Cloud specific instructions
+
+- 环境 `install` 会安装 Grok Build CLI（`curl -fsSL https://x.ai/cli/install.sh | bash`）；二进制在 `$HOME/.grok/bin/grok`。非登录 shell 需确保该目录在 `PATH` 中。
+- 验证 Grok 注册时，在临时目录运行 `init-repo` / `build` / `index`，再执行 `install-repo <绝对路径> --agent grok`；不要在本仓库根目录执行 `init-repo`（会污染 monorepo 根）。
+- `packages/cli/scripts/test-install-repo.ts` 在检测到 `grok` 可用时会跑真实 CLI smoke；缺 CLI 时自动跳过。

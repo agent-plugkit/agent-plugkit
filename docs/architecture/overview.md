@@ -23,7 +23,7 @@ scripts/                      仓库级公开内容检查
 1. **CLI**：`agent-plugkit init-repo | init | add | import-skill | validate | build | index | release-local | install-repo`。仓库维护命令可使用全局 `--root <dir>`；`install-repo` 直接接收独立来源。
 2. **配置 schema**：任意 marketplace root 下的 `marketplace.yaml` 与 `plugins/*/plugin.yaml`；类型与 Ajv schema 在 `packages/cli/src/schema/plugin-yaml.ts` 同源维护。
 3. **插件生成物**：Agent Plugins 1.0 根 `plugin.json`、条件性根 `mcp.json`，以及 Claude/Codex/MCP/Hook/LSP 原生文件。
-4. **Marketplace 生成物**：marketplace root 下的 `.github/plugin/marketplace.json`、`.cursor-plugin/marketplace.json`、`.claude-plugin/marketplace.json`、`.agents/plugins/marketplace.json`、`marketplace.json` 和 `plugins/CATALOG.md`。
+4. **Marketplace 生成物**：marketplace root 下的 `.github/plugin/marketplace.json`、`.cursor-plugin/marketplace.json`、`.claude-plugin/marketplace.json`、`.agents/plugins/marketplace.json`、`.grok-plugin/marketplace.json`、`marketplace.json` 和 `plugins/CATALOG.md`。
 
 包在 monorepo 内的位置不是终端用户接口；npm 包名、bin、CLI 行为、schema 和生成物格式继续受兼容性约束。内部 TypeScript 函数仍不是公共 Node library API，见 [ADR-0001](../adr/0001-cli-only-public-contract.md)。
 
@@ -76,8 +76,8 @@ existing local directory | owner/repo | HTTPS/SSH Git URL
                data-driven client adapter registry
              ┌───────────────┼────────────────┐
              ▼               ▼                ▼
- Claude/Codex/Copilot   VS Code JSONC      Cursor task
- executable + argv      atomic user write   manual only
+ Claude/Codex/Grok/Copilot  VS Code JSONC   Cursor task
+ executable + argv          atomic user write  manual only
              └───────────────┼────────────────┘
                              ▼
                per-target result + aggregate exit code
@@ -99,13 +99,14 @@ guard descriptor 与提交后校验覆盖已定义冲突，但 Node rename 不�
 - **CLI 内置资源**：`packages/cli/resources/plugkit/` 是 `init-repo` 脚手架内容的唯一源；构建时编译进 `src/generated`，发布后的 CLI 自包含。
 - **portable 与分发分层**：Agent Plugins 只标准化 Skills/MCP 包；客户端 index、安装、更新、信任和权限仍属于分发 adapter。
 - **注册不等于插件安装**：`install-repo` 只注册已就绪 Marketplace；不构建或修改来源，不安装其中插件，也不安装缺失客户端。
+- **原生注册 list 预检**：Claude / Codex / Grok / Copilot 在 `plugin marketplace add` 前统一执行 `plugin marketplace list --json`，按来源 path/URL/repo 匹配已注册项后跳过 add；list 不可用或不匹配时再 add，并以共享的 already-registered 文案作为兜底。匹配不按 marketplace 名称，避免同名覆盖误判。
 - **本地来源只读**：VS Code 用户配置路径与本地 Marketplace 相等、位于其内或经现有 symlink 指回来源时，在配置提交前失败。
 - **终端安全预检**：来源原值、百分号解码值、解析候选路径与真实路径中的 C0/C1/DEL 在呈现或客户端调用前统一拒绝；Git shorthand 的点路径段不作为远端仓库接受。
 - **路径段语义**：本地存在性检查保留用户输入的中间段，只有确认整条路径可访问后才生成 realpath。
 - **客户端差异归 adapter**：原生 executable/argv、本地索引、VS Code 配置和 Cursor 手工边界不得进入共享聚合策略。
 - **用户配置事务**：VS Code 写入保留 JSONC 与无关设置；相对配置根、非法 UTF-8、注释无法安全保留、malformed、可检测的 revision/guard 冲突或原子替换失败时不覆盖目标文件；失败候选会清理，清理受外部权限阻断时显式给出恢复路径。它不宣称文件系统级 CAS，`TD-001` 是唯一已接受并发例外类，并同时覆盖候选提交与 guard 恢复的无条件 rename 窗口。
 - **部分结果不回滚**：目标按固定顺序执行；非中断失败继续，最终以 `0/1/2/130` 和逐目标文字状态表达结果。
-- **客户端镜像优先级**：每个 marketplace root 的 `marketplace.json` 与 `.github/plugin/marketplace.json` 同字节；Codex index 只在 `.agents/plugins/marketplace.json`。
+- **客户端镜像优先级**：每个 marketplace root 的 `marketplace.json` 与 `.github/plugin/marketplace.json` 同字节；Codex index 只在 `.agents/plugins/marketplace.json`；Grok Build index 只在 `.grok-plugin/marketplace.json`。
 - **路径安全和事务**：声明路径、导入源与生成目标通过 `authorized-path`；创建、生成和 release 使用 revision/fingerprint、锁、staging、原子替换与有界回滚。
 - **输出隔离**：CLI 编译只写 `packages/cli/dist`；临时 marketplace 的 `release-local` 制品不得进入 CLI npm 包。
 - **发布生命周期**：`packages/cli` 的 `prepack` 总是先执行 workspace build；正常 `npm pack` / `npm publish` 不得依赖已有 `dist`，也不能成功产生缺少可执行 bin 的包。
