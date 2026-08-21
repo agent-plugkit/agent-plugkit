@@ -140,10 +140,11 @@ repeated `--agent` values are deduplicated and `--all` includes Cursor.
 
 Client behavior is deliberately adapter-specific:
 
-- Claude Code runs `claude plugin marketplace add <source>` after probing that exact command.
-- Codex runs `codex plugin marketplace add <source>` after probing that exact command.
-- Grok Build runs `grok plugin marketplace add <source>` after probing that exact command.
-- GitHub Copilot runs `copilot plugin marketplace add <source>` after probing that exact command.
+- Claude Code, Codex, Grok Build, and GitHub Copilot share one native registration path: probe
+  `plugin marketplace add --help`, then `plugin marketplace list --json` and skip `add` when the
+  source already matches by path/URL/repo (not marketplace name alone). If list is unavailable or
+  does not match, they run `plugin marketplace add <source>`; residual “already configured /
+  already added / already on disk” failures still count as completed.
 - VS Code atomically updates the current user's JSONC `settings.json`, enables
   `chat.plugins.enabled`, and deduplicates `chat.plugins.marketplaces`. Local directories are stored
   as `file://` URIs. Comments, trailing commas, indentation, unrelated settings, and the existing
