@@ -1,6 +1,6 @@
 {
   "name": "agent-plugkit-monorepo",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Development repository for the Agent Plugkit CLI",
   "license": "MIT",
