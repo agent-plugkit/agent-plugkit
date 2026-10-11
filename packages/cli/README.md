@@ -33,7 +33,7 @@ npx agent-plugkit build [plugin-name] --all
 npx agent-plugkit index
 npx agent-plugkit validate [plugin-name] --all
 npx agent-plugkit release-local
-npx agent-plugkit install-repo <git-repo|local-path> [--agent <agent>...] [--all]
+npx agent-plugkit install-repo <git-repo|local-path> [--agent <agent>...] [--all] [--plugin <name>...]
 ```
 
 Use `--root <dir>` when running from outside a marketplace repository:
@@ -133,6 +133,28 @@ npx agent-plugkit install-repo OWNER/REPO --agent claude --agent codex
 npx agent-plugkit install-repo /absolute/path/to/marketplace --all
 ```
 
+To register a marketplace and install plugins from it in one step, add `--plugin` (repeatable):
+
+```bash
+npx agent-plugkit install-repo agent-plugkit/plugkit-marketplace --agent claude --plugin musekit
+npx agent-plugkit install-repo agent-plugkit/plugkit-marketplace --agent codex --plugin musekit
+```
+
+After a target's registration completes, `--plugin` reads `plugin marketplace list --json` from
+that client to find the marketplace name registered for the same source (matched by path/URL/repo,
+not by name), then runs the client's own install command:
+
+| Target | Install command |
+| --- | --- |
+| `claude` | `claude plugin install <plugin>@<marketplace>` |
+| `codex` | `codex plugin add <plugin>@<marketplace>` |
+
+Pass only the plugin name (for example `musekit`); `@marketplace` is resolved automatically. If a
+client CLI is missing, both its registration and its plugin installs are reported as `[缺少 CLI]`
+with an install hint. Targets without a documented plugin install command (Grok Build, GitHub
+Copilot, VS Code, Cursor) still register the marketplace, and each requested plugin is reported as
+`[需手动]`. Both clients' install commands are idempotent, so re-running the same command is safe.
+
 Without `--agent` or `--all`, an interactive terminal shows a numbered multi-select and defaults to
 the targets that can currently be handled automatically. Non-interactive callers must pass an
 explicit selection. Target IDs are `claude`, `codex`, `grok`, `copilot`, `vscode`, and `cursor`;
@@ -173,7 +195,7 @@ child-process interrupt occurs. The final text summary uses explicit labels such
 
 | Exit code | Meaning |
 | --- | --- |
-| `0` | Every selected target completed registration or VS Code configuration injection |
+| `0` | Every selected target completed registration or VS Code configuration injection (and every requested plugin install) |
 | `2` | At least one target completed and at least one target is missing, manual, or failed |
 | `1` | No target completed, or source/argument preflight failed |
 | `130` | The user or a client process interrupted the run |
@@ -203,9 +225,10 @@ The generated indexes still support direct client flows when needed:
   grok plugin marketplace add OWNER/REPO
   ```
 
-`install-repo` performs only current-user Marketplace registration or VS Code configuration. It
-does not push or publish a Git repository, build or modify the source, install a missing client CLI,
-import into Cursor automatically, or install any plugin from the Marketplace. `release-local` only
+`install-repo` performs only current-user Marketplace registration or VS Code configuration and,
+when `--plugin` is given, plugin installation through the Claude Code or Codex CLI. It does not
+push or publish a Git repository, build or modify the source, install a missing client CLI, import
+into Cursor automatically, or install plugins without an explicit `--plugin`. `release-local` only
 creates a checked local directory and tar archive.
 
 ## Importing an Existing Skill

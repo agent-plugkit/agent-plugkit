@@ -66,6 +66,10 @@ export interface TargetRegistrationResult {
   readonly invocation?: RegistrationInvocation;
 }
 
+export interface PluginInstallResult extends TargetRegistrationResult {
+  readonly plugin: string;
+}
+
 export interface MarketplaceRegistrationInspection {
   readonly source: MarketplaceRegistrationSource;
   readonly targets: readonly TargetInspection[];

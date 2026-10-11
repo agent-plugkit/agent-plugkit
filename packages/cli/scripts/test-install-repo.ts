@@ -22,12 +22,14 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse } from 'jsonc-parser';
 import {
   marketplaceListContainsSource,
+  marketplaceNameFromList,
   normalizeMarketplaceSourceKey,
 } from '../src/adapters/marketplace-registration.js';
 import {
   executeMarketplaceRegistration,
   inspectMarketplaceRegistration,
   normalizeMarketplaceSource,
+  normalizePluginNames,
 } from '../src/application/marketplace-registration.js';
 import type { AgentTargetId } from '../src/application/marketplace-registration-contract.js';
 import type {
@@ -862,6 +864,85 @@ function testMarketplaceListSourceMatching(): void {
   assert.equal(marketplaceListContainsSource('not-json', remoteSource), false);
 }
 
+function testMarketplaceNameResolution(): void {
+  const remoteSource = normalizeMarketplaceSource('agent-plugkit/plugkit-marketplace', {
+    baseDir: tmpdir(),
+  });
+  // Shapes copied from `claude plugin marketplace list --json` and
+  // `codex plugin marketplace list --json`.
+  assert.equal(
+    marketplaceNameFromList(
+      JSON.stringify([
+        { name: 'other', source: 'github', repo: 'other/repo' },
+        {
+          name: 'agent-plugkit',
+          source: 'github',
+          repo: 'agent-plugkit/plugkit-marketplace',
+          installLocation: '/home/user/.claude/plugins/marketplaces/agent-plugkit',
+        },
+      ]),
+      remoteSource,
+    ),
+    'agent-plugkit',
+  );
+  assert.equal(
+    marketplaceNameFromList(
+      JSON.stringify({
+        marketplaces: [
+          {
+            name: 'agent-plugkit',
+            root: '/home/user/.codex/.tmp/marketplaces/agent-plugkit',
+            marketplaceSource: {
+              sourceType: 'git',
+              source: 'https://github.com/agent-plugkit/plugkit-marketplace.git',
+            },
+          },
+        ],
+      }),
+      remoteSource,
+    ),
+    'agent-plugkit',
+  );
+
+  const localRoot = mkdtempSync(join(tmpdir(), 'agent-plugkit-name-resolution-'));
+  const localSource = normalizeMarketplaceSource(localRoot, { baseDir: tmpdir() });
+  assert.equal(
+    marketplaceNameFromList(
+      JSON.stringify([
+        { name: 'local-market', source: 'directory', path: realpathSync(localRoot) },
+      ]),
+      localSource,
+    ),
+    'local-market',
+  );
+
+  // Name alone never matches, and unsafe names are not passed on to argv.
+  assert.equal(
+    marketplaceNameFromList(
+      JSON.stringify([{ name: 'agent-plugkit/plugkit-marketplace' }]),
+      remoteSource,
+    ),
+    undefined,
+  );
+  assert.equal(
+    marketplaceNameFromList(
+      JSON.stringify([{ name: 'bad name;rm', repo: 'agent-plugkit/plugkit-marketplace' }]),
+      remoteSource,
+    ),
+    undefined,
+  );
+  assert.equal(marketplaceNameFromList('not-json', remoteSource), undefined);
+
+  assert.deepEqual(normalizePluginNames(['musekit', 'other-plugin', 'musekit']), [
+    'musekit',
+    'other-plugin',
+  ]);
+  expectThrows(() => normalizePluginNames(['musekit@agent-plugkit']), /插件名无效/);
+  expectThrows(() => normalizePluginNames(['Musekit']), /插件名无效/);
+  expectThrows(() => normalizePluginNames(['-x']), /插件名无效/);
+  expectThrows(() => normalizePluginNames(['muse\u001bkit']), /控制字符/);
+}
+
 async function testNativeListPrecheckIdempotency(): Promise<void> {
   const root = mkdtempSync(join(tmpdir(), 'agent-plugkit-native-list-precheck-'));
   writeRegistrationIndexes(root);
@@ -1441,9 +1522,20 @@ if (args.includes('--help')) {
     process.exit(0);
   }
 }
+const statePath = process.env.AGENT_PLUGKIT_FAKE_LOG + '.' + name + '.marketplaces.json';
+const registered = () => (fs.existsSync(statePath) ? JSON.parse(fs.readFileSync(statePath, 'utf8')) : []);
 if (args.includes('list')) {
-  process.stdout.write('[]\\n');
+  const sources = mode === 'stateless-list' ? [] : registered();
+  const marketplace = process.env.AGENT_PLUGKIT_FAKE_MARKETPLACE_NAME || 'fake-market';
+  const listed = name === 'codex'
+    ? { marketplaces: sources.map((source) => ({ name: marketplace, root: '/fake/' + marketplace, marketplaceSource: { sourceType: 'git', source } })) }
+    : sources.map((repo) => ({ name: marketplace, source: 'github', repo }));
+  process.stdout.write(JSON.stringify(listed) + '\\n');
   process.exit(0);
+}
+if (args[0] === 'plugin' && args[1] !== 'marketplace' && mode === 'plugin-fail') {
+  process.stderr.write('Plugin not found in marketplace\\n');
+  process.exit(5);
 }
 if (mode === 'fail') {
   process.stderr.write('registration rejected\\n');
@@ -1459,6 +1551,9 @@ if (mode === 'wait') {
 if (mode === 'ignore-interrupt') {
   process.stdout.write('registration ignoring interrupt\\n');
   setInterval(() => undefined, 1000);
+}
+if (args[0] === 'plugin' && args[1] === 'marketplace' && args[2] === 'add') {
+  fs.writeFileSync(statePath, JSON.stringify([...registered(), args[3]]));
 }
 process.stdout.write('registered\\n');
 `,
@@ -1752,6 +1847,122 @@ function testCliEndToEnd(): void {
   ]);
 }
 
+function testCliPluginInstallEndToEnd(): void {
+  const completeFixture = fakeCliEnvironment(['claude', 'codex']);
+  const completed = runCli(
+    [
+      'install-repo',
+      'owner/repo',
+      '--agent',
+      'claude',
+      '--agent',
+      'codex',
+      '--plugin',
+      'musekit',
+      '--plugin',
+      'second-plugin',
+      '--plugin',
+      'musekit',
+    ],
+    completeFixture.env,
+  );
+  assert.equal(completed.status, 0, completed.output);
+  assert.match(completed.output, /安装插件：musekit, second-plugin/);
+  assert.match(completed.output, /→ Claude Code: claude "plugin" "install" "musekit@fake-market"/);
+  assert.match(completed.output, /→ Codex: codex "plugin" "add" "musekit@fake-market"/);
+  assert.match(completed.output, /插件安装结果：\n已完成：\n {2}\[完成\] Claude Code：插件 musekit@fake-market/);
+  assert.match(completed.output, /退出码：0\n$/);
+  assert.deepEqual(
+    readFakeCalls(completeFixture.logPath).filter((call) => !call.args.includes('--help')),
+    [
+      { name: 'claude', args: ['plugin', 'marketplace', 'list', '--json'] },
+      { name: 'claude', args: ['plugin', 'marketplace', 'add', 'owner/repo'] },
+      { name: 'codex', args: ['plugin', 'marketplace', 'list', '--json'] },
+      { name: 'codex', args: ['plugin', 'marketplace', 'add', 'owner/repo'] },
+      { name: 'claude', args: ['plugin', 'marketplace', 'list', '--json'] },
+      { name: 'claude', args: ['plugin', 'install', 'musekit@fake-market'] },
+      { name: 'claude', args: ['plugin', 'install', 'second-plugin@fake-market'] },
+      { name: 'codex', args: ['plugin', 'marketplace', 'list', '--json'] },
+      { name: 'codex', args: ['plugin', 'add', 'musekit@fake-market'] },
+      { name: 'codex', args: ['plugin', 'add', 'second-plugin@fake-market'] },
+    ],
+  );
+
+  // Re-running is safe: registration is skipped by the list precheck and install is retried.
+  const rerun = runCli(
+    ['install-repo', 'owner/repo', '--agent', 'claude', '--plugin', 'musekit'],
+    completeFixture.env,
+  );
+  assert.equal(rerun.status, 0, rerun.output);
+  assert.match(rerun.output, /list 预检命中/);
+  assert.match(rerun.output, /\[完成\] Claude Code：插件 musekit@fake-market/);
+
+  const missingFixture = fakeCliEnvironment(['claude']);
+  const missing = runCli(
+    ['install-repo', 'owner/repo', '--agent', 'claude', '--agent', 'codex', '--plugin', 'musekit'],
+    missingFixture.env,
+  );
+  assert.equal(missing.status, 2, missing.output);
+  assert.match(missing.output, /\[完成\] Claude Code：插件 musekit@fake-market/);
+  assert.match(
+    missing.output,
+    /\[缺少 CLI\] Codex：未找到 codex CLI；Marketplace 未注册，未安装 musekit。\n {4}下一步：.*npm install -g @openai\/codex/,
+  );
+  assert.equal(
+    readFakeCalls(missingFixture.logPath).some((call) => call.name === 'codex'),
+    false,
+  );
+
+  const pluginFailFixture = fakeCliEnvironment(['claude']);
+  pluginFailFixture.env.AGENT_PLUGKIT_FAKE_CLAUDE = 'plugin-fail';
+  const pluginFail = runCli(
+    ['install-repo', 'owner/repo', '--agent', 'claude', '--plugin', 'nosuch'],
+    pluginFailFixture.env,
+  );
+  assert.equal(pluginFail.status, 2, pluginFail.output);
+  assert.match(pluginFail.output, /\[完成\] Claude Code：Marketplace 已通过原生 CLI 注册/);
+  assert.match(
+    pluginFail.output,
+    /\[失败\] Claude Code：原生 CLI 安装插件失败: Plugin not found in marketplace \(exit 5\)\n {4}下一步：.*claude plugin install nosuch@fake-market/,
+  );
+
+  const unmatchedFixture = fakeCliEnvironment(['codex']);
+  unmatchedFixture.env.AGENT_PLUGKIT_FAKE_CODEX = 'stateless-list';
+  const unmatched = runCli(
+    ['install-repo', 'owner/repo', '--agent', 'codex', '--plugin', 'musekit'],
+    unmatchedFixture.env,
+  );
+  assert.equal(unmatched.status, 2, unmatched.output);
+  assert.match(unmatched.output, /\[失败\] Codex：.*没有找到来源 owner\/repo 对应的 Marketplace 名称/);
+  assert.match(unmatched.output, /codex plugin add musekit@<marketplace>/);
+  assert.equal(
+    readFakeCalls(unmatchedFixture.logPath).some((call) => call.args[1] === 'add'),
+    false,
+  );
+
+  const unsupportedFixture = fakeCliEnvironment(['grok']);
+  const unsupported = runCli(
+    ['install-repo', 'owner/repo', '--agent', 'grok', '--plugin', 'musekit'],
+    unsupportedFixture.env,
+  );
+  assert.equal(unsupported.status, 2, unsupported.output);
+  assert.match(unsupported.output, /\[完成\] Grok Build：Marketplace 已通过原生 CLI 注册/);
+  assert.match(unsupported.output, /\[需手动\] Grok Build：Grok Build 暂不支持由 agent-plugkit 自动安装插件/);
+  assert.equal(
+    readFakeCalls(unsupportedFixture.logPath).some((call) => call.args[1] === 'install'),
+    false,
+  );
+
+  const invalidFixture = fakeCliEnvironment(['claude']);
+  const invalid = runCli(
+    ['install-repo', 'owner/repo', '--agent', 'claude', '--plugin', 'musekit@agent-plugkit'],
+    invalidFixture.env,
+  );
+  assert.equal(invalid.status, 1, invalid.output);
+  assert.match(invalid.output, /插件名无效: musekit@agent-plugkit/);
+  assert.deepEqual(readFakeCalls(invalidFixture.logPath), []);
+}
+
 async function testRealSignalInterruption(): Promise<void> {
   const registrationFixture = fakeCliEnvironment(['claude', 'codex']);
   registrationFixture.env.AGENT_PLUGKIT_FAKE_CLAUDE = 'wait';
@@ -1841,6 +2052,8 @@ await testRegistrationRegistry();
 console.log('✓ install-repo registration registry');
 testMarketplaceListSourceMatching();
 console.log('✓ install-repo marketplace list source matching');
+testMarketplaceNameResolution();
+console.log('✓ install-repo marketplace name resolution and plugin names');
 await testNativeListPrecheckIdempotency();
 console.log('✓ install-repo native list precheck idempotency');
 await testVscodeSourceReadOnlyBoundary();
@@ -1855,6 +2068,8 @@ await testPreAbortedProcessRunner();
 console.log('✓ install-repo pre-aborted process runner');
 testCliEndToEnd();
 console.log('✓ install-repo CLI end-to-end');
+testCliPluginInstallEndToEnd();
+console.log('✓ install-repo --plugin CLI end-to-end');
 await testRealSignalInterruption();
 console.log('✓ install-repo real SIGINT coordination');
 await testRealGrokCliRegistration();

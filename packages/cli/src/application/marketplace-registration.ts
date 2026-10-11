@@ -15,6 +15,8 @@ import {
   type MarketplaceRegistrationInspection,
   type MarketplaceRegistrationReport,
   type MarketplaceRegistrationSource,
+  type PluginInstallResult,
+  type RegistrationInvocation,
   type TargetInspection,
   type TargetRegistrationResult,
 } from './marketplace-registration-contract.js';
@@ -385,4 +387,100 @@ export async function executeMarketplaceRegistration(
     results,
     exitCode: marketplaceRegistrationExitCode(results),
   };
+}
+
+/** Same rule as plugin.yaml `name`; the marketplace part is resolved from the client. */
+const PLUGIN_NAME = /^(?!.*--)[a-z0-9][a-z0-9-]*[a-z0-9]$/;
+
+export function normalizePluginNames(values: readonly string[]): string[] {
+  const plugins: string[] = [];
+  for (const value of values) {
+    assertNoTerminalControlCharacters(value, '插件名');
+    if (!PLUGIN_NAME.test(value)) {
+      throw new CommandError(
+        `插件名无效: ${value}。只传插件名（小写字母、数字与连字符，例如 musekit），不要附带 @marketplace。`,
+      );
+    }
+    if (!plugins.includes(value)) {
+      plugins.push(value);
+    }
+  }
+  return plugins;
+}
+
+export interface ExecutePluginInstallationOptions {
+  readonly runtime?: MarketplaceRegistrationRuntime;
+  readonly onInvocation?: (label: string, invocation: RegistrationInvocation) => void;
+  readonly onPluginResult?: (result: PluginInstallResult) => void;
+}
+
+function withoutTrailingPeriod(message: string): string {
+  return message.replace(/[。.]$/u, '');
+}
+
+/**
+ * Install plugins through each target's own CLI after its Marketplace registration completed.
+ * Targets whose registration did not complete keep that status and recovery for every plugin.
+ */
+export async function executePluginInstallation(
+  report: MarketplaceRegistrationReport,
+  plugins: readonly string[],
+  options: ExecutePluginInstallationOptions = {},
+): Promise<PluginInstallResult[]> {
+  const results: PluginInstallResult[] = [];
+  const push = (result: PluginInstallResult): void => {
+    results.push(result);
+    options.onPluginResult?.(result);
+  };
+  for (const registration of report.results) {
+    const adapter = getMarketplaceRegistrationAdapter(registration.id);
+    const base = { id: registration.id, label: registration.label };
+    const interrupted =
+      options.runtime?.signal?.aborted ||
+      results.some((result) => result.status === 'interrupted');
+    if (interrupted) {
+      plugins.forEach((plugin) =>
+        push({
+          ...base,
+          plugin,
+          status: 'interrupted',
+          message: `因中断未安装 ${plugin}。`,
+          recovery: '确认客户端状态后重新运行命令。',
+        }),
+      );
+      continue;
+    }
+    if (registration.status !== 'completed') {
+      plugins.forEach((plugin) =>
+        push({
+          ...base,
+          plugin,
+          status: registration.status,
+          message: `${withoutTrailingPeriod(registration.message)}；Marketplace 未注册，未安装 ${plugin}。`,
+          ...(registration.recovery ? { recovery: registration.recovery } : {}),
+        }),
+      );
+      continue;
+    }
+    if (!adapter.installPlugins) {
+      plugins.forEach((plugin) =>
+        push({
+          ...base,
+          plugin,
+          status: 'manual-required',
+          message: `${registration.label} 暂不支持由 agent-plugkit 自动安装插件。`,
+          recovery: `在 ${registration.label} 中从已注册的 Marketplace 安装 ${plugin}。`,
+        }),
+      );
+      continue;
+    }
+    const installed = await adapter.installPlugins(
+      report.source,
+      plugins,
+      options.runtime,
+      (invocation) => options.onInvocation?.(registration.label, invocation),
+    );
+    installed.forEach(push);
+  }
+  return results;
 }

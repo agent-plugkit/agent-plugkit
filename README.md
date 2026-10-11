@@ -9,6 +9,15 @@ Agent Plugkit 是用于开发和发布 `agent-plugkit` CLI 的仓库。
 
 官方插件市场独立维护在 [`agent-plugkit/plugkit-marketplace`](https://github.com/agent-plugkit/plugkit-marketplace)。
 
+一条命令注册官方 Marketplace 并安装插件（需要 Node.js 20+ 与对应 agent 的 CLI）：
+
+```bash
+npx agent-plugkit install-repo agent-plugkit/plugkit-marketplace --agent claude --plugin musekit
+npx agent-plugkit install-repo agent-plugkit/plugkit-marketplace --agent codex --plugin musekit
+```
+
+各客户端的完整安装与 Musekit 运行依赖见 Marketplace 的 README。
+
 ## 开发
 
 ```bash
