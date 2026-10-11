@@ -98,7 +98,7 @@ guard descriptor 与提交后校验覆盖已定义冲突，但 Node rename 不�
 - **单一事实源**：平台产物从 marketplace root 内的 `plugin.yaml` 与插件内容重新推导，不手改生成物。
 - **CLI 内置资源**：`packages/cli/resources/plugkit/` 是 `init-repo` 脚手架内容的唯一源；构建时编译进 `src/generated`，发布后的 CLI 自包含。
 - **portable 与分发分层**：Agent Plugins 只标准化 Skills/MCP 包；客户端 index、安装、更新、信任和权限仍属于分发 adapter。
-- **注册不等于插件安装**：`install-repo` 只注册已就绪 Marketplace；不构建或修改来源，不安装其中插件，也不安装缺失客户端。
+- **插件安装需显式请求**：`install-repo` 默认只注册已就绪 Marketplace；仅在传入 `--plugin` 时，于该目标注册完成后通过客户端自身 CLI 安装插件（Claude Code `plugin install`、Codex `plugin add`），Marketplace 名称从 `plugin marketplace list --json` 按来源匹配得出，不按名称猜测。无文档化安装命令的目标返回需手动。它不构建或修改来源，也不安装缺失客户端（见 ADR-0003）。
 - **原生注册 list 预检**：Claude / Codex / Grok / Copilot 在 `plugin marketplace add` 前统一执行 `plugin marketplace list --json`，按来源 path/URL/repo 匹配已注册项后跳过 add；list 不可用或不匹配时再 add，并以共享的 already-registered 文案作为兜底。匹配不按 marketplace 名称，避免同名覆盖误判。
 - **本地来源只读**：VS Code 用户配置路径与本地 Marketplace 相等、位于其内或经现有 symlink 指回来源时，在配置提交前失败。
 - **终端安全预检**：来源原值、百分号解码值、解析候选路径与真实路径中的 C0/C1/DEL 在呈现或客户端调用前统一拒绝；Git shorthand 的点路径段不作为远端仓库接受。

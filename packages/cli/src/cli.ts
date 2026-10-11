@@ -159,7 +159,7 @@ program
 
 program
   .command('install-repo <source>')
-  .description('把已就绪的 marketplace 注册到所选 agent（不安装具体插件）')
+  .description('把已就绪的 marketplace 注册到所选 agent，可用 --plugin 同时安装插件')
   .option(
     '--agent <agent>',
     '目标 agent，可重复: claude, codex, grok, copilot, vscode, cursor',
@@ -167,10 +167,16 @@ program
     [],
   )
   .option('--all', '选择全部六个 agent（Cursor 仍需手工处理）')
+  .option(
+    '--plugin <name>',
+    '注册后通过 agent 自身 CLI 安装插件，可重复（当前支持 claude、codex）',
+    (value: string, previous: string[]) => [...previous, value],
+    [],
+  )
   .action(
     async (
       source: string,
-      options: { agent: string[]; all: boolean },
+      options: { agent: string[]; all: boolean; plugin: string[] },
     ) => {
       const result = await runInstallRepo(source, options);
       process.exitCode = result.exitCode;

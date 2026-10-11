@@ -2,7 +2,10 @@ import { createInterface } from 'node:readline/promises';
 import type { MarketplaceRegistrationRuntime } from '../adapters/marketplace-registration.js';
 import {
   executeMarketplaceRegistration,
+  executePluginInstallation,
   inspectMarketplaceRegistration,
+  marketplaceRegistrationExitCode,
+  normalizePluginNames,
   normalizeTargetIds,
 } from '../application/marketplace-registration.js';
 import {
@@ -10,6 +13,8 @@ import {
   type AgentTargetId,
   type MarketplaceRegistrationInspection,
   type MarketplaceRegistrationReport,
+  type PluginInstallResult,
+  type RegistrationInvocation,
   type TargetInspection,
   type TargetRegistrationResult,
 } from '../application/marketplace-registration-contract.js';
@@ -18,6 +23,7 @@ import { CommandError } from '../core/errors.js';
 export interface InstallRepoOptions {
   readonly agent?: readonly string[];
   readonly all?: boolean;
+  readonly plugin?: readonly string[];
 }
 
 export interface InstallRepoCommandDependencies {
@@ -32,6 +38,7 @@ export interface InstallRepoCommandDependencies {
 export interface InstallRepoCommandResult {
   readonly exitCode: 0 | 1 | 2 | 130;
   readonly report?: MarketplaceRegistrationReport;
+  readonly pluginResults?: readonly PluginInstallResult[];
 }
 
 const INSPECTION_LABELS: Record<TargetInspection['status'], string> = {
@@ -135,12 +142,15 @@ function renderPrompt(
   return defaults;
 }
 
+function formatArgv(invocation: RegistrationInvocation): string {
+  return [invocation.executable, ...invocation.args.map((arg) => JSON.stringify(arg))].join(' ');
+}
+
 function formatInvocation(target: TargetInspection): string {
   if (!target.invocation) {
     return target.message;
   }
-  return [target.invocation.executable, ...target.invocation.args.map((arg) => JSON.stringify(arg))]
-    .join(' ');
+  return formatArgv(target.invocation);
 }
 
 function renderTargetStart(target: TargetInspection, write: (text: string) => void): void {
@@ -159,13 +169,14 @@ function renderResultLine(
   }
 }
 
-function renderReport(
-  report: MarketplaceRegistrationReport,
+function renderGroups(
+  title: string,
+  results: readonly TargetRegistrationResult[],
   write: (text: string) => void,
 ): void {
-  const completed = report.results.filter((result) => result.status === 'completed');
-  const incomplete = report.results.filter((result) => result.status !== 'completed');
-  write('\n注册结果：\n');
+  const completed = results.filter((result) => result.status === 'completed');
+  const incomplete = results.filter((result) => result.status !== 'completed');
+  write(`\n${title}：\n`);
   write('已完成：\n');
   if (completed.length === 0) {
     write('  无\n');
@@ -178,7 +189,19 @@ function renderReport(
   } else {
     incomplete.forEach((result) => renderResultLine(result, write));
   }
-  write(`退出码：${report.exitCode}\n`);
+}
+
+function renderReport(
+  report: MarketplaceRegistrationReport,
+  write: (text: string) => void,
+  pluginResults?: readonly PluginInstallResult[],
+  exitCode: 0 | 1 | 2 | 130 = report.exitCode,
+): void {
+  renderGroups('注册结果', report.results, write);
+  if (pluginResults) {
+    renderGroups('插件安装结果', pluginResults, write);
+  }
+  write(`退出码：${exitCode}\n`);
 }
 
 function selectedInspection(
@@ -201,6 +224,7 @@ export async function runInstallRepo(
   if (options.all && requested.length > 0) {
     throw new CommandError('不能同时使用 --agent 与 --all。');
   }
+  const plugins = normalizePluginNames(options.plugin ?? []);
 
   const interactive =
     dependencies.interactive ?? Boolean(process.stdin.isTTY && process.stdout.isTTY);
@@ -265,8 +289,20 @@ export async function runInstallRepo(
       onTargetStart: (target) => renderTargetStart(target, write),
       onTargetResult: (result) => renderResultLine(result, write),
     });
-    renderReport(report, write);
-    return { exitCode: report.exitCode, report };
+    if (plugins.length === 0) {
+      renderReport(report, write);
+      return { exitCode: report.exitCode, report };
+    }
+
+    write(`\n安装插件：${plugins.join(', ')}\n`);
+    const pluginResults = await executePluginInstallation(report, plugins, {
+      runtime,
+      onInvocation: (label, invocation) => write(`→ ${label}: ${formatArgv(invocation)}\n`),
+      onPluginResult: (result) => renderResultLine(result, write),
+    });
+    const exitCode = marketplaceRegistrationExitCode([...report.results, ...pluginResults]);
+    renderReport(report, write, pluginResults, exitCode);
+    return { exitCode, report, pluginResults };
   } finally {
     process.removeListener('SIGINT', onSigint);
   }

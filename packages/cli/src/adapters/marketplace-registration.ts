@@ -3,6 +3,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import type {
   AgentTargetId,
   MarketplaceRegistrationSource,
+  PluginInstallResult,
+  RegistrationInvocation,
   TargetInspection,
   TargetRegistrationResult,
 } from '../application/marketplace-registration-contract.js';
@@ -43,6 +45,13 @@ export interface MarketplaceRegistrationAdapter {
     inspection: TargetInspection,
     runtime?: MarketplaceRegistrationRuntime,
   ): Promise<TargetRegistrationResult>;
+  /** Present only when the client CLI exposes a documented plugin install command. */
+  installPlugins?(
+    source: MarketplaceRegistrationSource,
+    plugins: readonly string[],
+    runtime?: MarketplaceRegistrationRuntime,
+    onInvocation?: (invocation: RegistrationInvocation) => void,
+  ): Promise<PluginInstallResult[]>;
 }
 
 interface NativeAdapterDefinition {
@@ -51,6 +60,8 @@ interface NativeAdapterDefinition {
   readonly executable: string;
   readonly localIndexCandidates: readonly string[];
   readonly missingRecovery: string;
+  /** argv prefix before `<plugin>@<marketplace>`, e.g. `plugin install`. */
+  readonly pluginInstallArgs?: readonly string[];
 }
 
 /** Shared fallback when a client still fails add after list preflight. */
@@ -150,6 +161,25 @@ function collectMarketplaceSourceCandidates(
   }
 }
 
+function wantedSourceKeys(source: MarketplaceRegistrationSource): Set<string> {
+  const wanted = new Set(
+    [source.clientValue, source.displayValue, source.input]
+      .map((value) => normalizeMarketplaceSourceKey(value))
+      .filter((value) => value.length > 0),
+  );
+  if (source.kind === 'local') {
+    wanted.add(normalizeMarketplaceSourceKey(source.localPath));
+  }
+  return wanted;
+}
+
+function candidatesMatch(candidates: readonly string[], wanted: ReadonlySet<string>): boolean {
+  return candidates.some((candidate) => {
+    const key = normalizeMarketplaceSourceKey(candidate);
+    return key.length > 0 && wanted.has(key);
+  });
+}
+
 /** True when list --json output already contains the registration source. */
 export function marketplaceListContainsSource(
   listJsonText: string,
@@ -163,21 +193,60 @@ export function marketplaceListContainsSource(
   }
   const candidates: string[] = [];
   collectMarketplaceSourceCandidates(parsed, candidates);
-  const wanted = new Set(
-    [source.clientValue, source.displayValue, source.input]
-      .map((value) => normalizeMarketplaceSourceKey(value))
-      .filter((value) => value.length > 0),
-  );
-  if (source.kind === 'local') {
-    wanted.add(normalizeMarketplaceSourceKey(source.localPath));
+  return candidatesMatch(candidates, wantedSourceKeys(source));
+}
+
+const MARKETPLACE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * Resolve the client-side marketplace name for a registered source from list --json output.
+ * Matching is by source path/URL/repo, never by name, mirroring the registration precheck.
+ */
+export function marketplaceNameFromList(
+  listJsonText: string,
+  source: MarketplaceRegistrationSource,
+): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(listJsonText);
+  } catch {
+    return undefined;
   }
-  for (const candidate of candidates) {
-    const key = normalizeMarketplaceSourceKey(candidate);
-    if (key.length > 0 && wanted.has(key)) {
-      return true;
+  const wanted = wantedSourceKeys(source);
+  const visit = (value: unknown): string | undefined => {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const found = visit(item);
+        if (found) {
+          return found;
+        }
+      }
+      return undefined;
     }
-  }
-  return false;
+    if (!value || typeof value !== 'object') {
+      return undefined;
+    }
+    const record = value as Record<string, unknown>;
+    if (typeof record.name === 'string' && MARKETPLACE_NAME.test(record.name)) {
+      const candidates: string[] = [];
+      for (const [key, child] of Object.entries(record)) {
+        if (key !== 'name') {
+          collectMarketplaceSourceCandidates(child, candidates, key);
+        }
+      }
+      if (candidatesMatch(candidates, wanted)) {
+        return record.name;
+      }
+    }
+    for (const child of Object.values(record)) {
+      const found = visit(child);
+      if (found) {
+        return found;
+      }
+    }
+    return undefined;
+  };
+  return visit(parsed);
 }
 
 function runnerFor(runtime?: MarketplaceRegistrationRuntime): ProcessRunner {
@@ -296,6 +365,130 @@ function processFailureMessage(result: ProcessResult): string {
   }
   const detail = result.stderr.trim() || result.stdout.trim() || result.message;
   return `${detail}${result.exitCode === null ? '' : ` (exit ${result.exitCode})`}`;
+}
+
+function nativePluginInstaller(
+  definition: NativeAdapterDefinition,
+  pluginInstallArgs: readonly string[],
+): NonNullable<MarketplaceRegistrationAdapter['installPlugins']> {
+  return async (source, plugins, runtime, onInvocation) => {
+    const pluginResult = (
+      plugin: string,
+      result: Omit<PluginInstallResult, 'id' | 'label' | 'plugin'>,
+    ): PluginInstallResult => ({
+      id: definition.id,
+      label: definition.label,
+      plugin,
+      ...result,
+    });
+    const manualCommand = (plugin: string, marketplace = '<marketplace>'): string =>
+      [definition.executable, ...pluginInstallArgs, `${plugin}@${marketplace}`].join(' ');
+
+    const listed = await runnerFor(runtime).run({
+      executable: definition.executable,
+      args: ['plugin', 'marketplace', 'list', '--json'],
+      captureOutput: true,
+      signal: runtime?.signal,
+    });
+    if (listed.status !== 'completed') {
+      return plugins.map((plugin) => {
+        if (listed.status === 'interrupted') {
+          return pluginResult(plugin, {
+            status: 'interrupted',
+            message: `插件安装前 list 被 ${listed.signal} 中断；未安装 ${plugin}。`,
+            recovery: '确认客户端状态后重新运行命令。',
+          });
+        }
+        if (listed.status === 'missing') {
+          return pluginResult(plugin, {
+            status: 'missing-cli',
+            message: `未找到 ${definition.executable} CLI；未安装 ${plugin}。`,
+            recovery: definition.missingRecovery,
+          });
+        }
+        return pluginResult(plugin, {
+          status: 'failed',
+          message: `无法读取已注册 Marketplace 列表: ${processFailureMessage(listed)}`,
+          recovery: `确认 Marketplace 已注册后手动运行: ${manualCommand(plugin)}`,
+        });
+      });
+    }
+    const marketplace = marketplaceNameFromList(listed.stdout, source);
+    if (!marketplace) {
+      return plugins.map((plugin) =>
+        pluginResult(plugin, {
+          status: 'failed',
+          message: `plugin marketplace list --json 中没有找到来源 ${source.displayValue} 对应的 Marketplace 名称；未安装 ${plugin}。`,
+          recovery: `运行 ${definition.executable} plugin marketplace list 查看名称后手动运行: ${manualCommand(plugin)}`,
+        }),
+      );
+    }
+
+    const results: PluginInstallResult[] = [];
+    let interrupted = false;
+    for (const plugin of plugins) {
+      const invocation = {
+        executable: definition.executable,
+        args: [...pluginInstallArgs, `${plugin}@${marketplace}`],
+      };
+      if (interrupted || runtime?.signal?.aborted) {
+        results.push(
+          pluginResult(plugin, {
+            status: 'interrupted',
+            message: `因中断未安装 ${plugin}@${marketplace}。`,
+            recovery: '确认客户端状态后重新运行命令。',
+            invocation,
+          }),
+        );
+        continue;
+      }
+      onInvocation?.(invocation);
+      const executed = await runnerFor(runtime).run({
+        executable: invocation.executable,
+        args: invocation.args,
+        captureOutput: true,
+        signal: runtime?.signal,
+      });
+      if (executed.status === 'completed') {
+        results.push(
+          pluginResult(plugin, {
+            status: 'completed',
+            message: `插件 ${plugin}@${marketplace} 已通过原生 CLI 安装。`,
+            invocation,
+          }),
+        );
+      } else if (executed.status === 'missing') {
+        results.push(
+          pluginResult(plugin, {
+            status: 'missing-cli',
+            message: `执行前未找到 ${definition.executable} CLI；未安装 ${plugin}。`,
+            recovery: definition.missingRecovery,
+            invocation,
+          }),
+        );
+      } else if (executed.status === 'interrupted') {
+        interrupted = true;
+        results.push(
+          pluginResult(plugin, {
+            status: 'interrupted',
+            message: `插件安装被 ${executed.signal} 中断。`,
+            recovery: '确认客户端状态后重新运行命令。',
+            invocation,
+          }),
+        );
+      } else {
+        results.push(
+          pluginResult(plugin, {
+            status: 'failed',
+            message: `原生 CLI 安装插件失败: ${processFailureMessage(executed)}`,
+            recovery: `确认插件名存在于 Marketplace ${marketplace} 后重试: ${manualCommand(plugin, marketplace)}`,
+            invocation,
+          }),
+        );
+      }
+    }
+    return results;
+  };
 }
 
 function nativeAdapter(definition: NativeAdapterDefinition): MarketplaceRegistrationAdapter {
@@ -463,6 +656,9 @@ function nativeAdapter(definition: NativeAdapterDefinition): MarketplaceRegistra
         invocation,
       };
     },
+    ...(definition.pluginInstallArgs
+      ? { installPlugins: nativePluginInstaller(definition, definition.pluginInstallArgs) }
+      : {}),
   };
 }
 
@@ -471,7 +667,9 @@ const claudeAdapter = nativeAdapter({
   label: 'Claude Code',
   executable: 'claude',
   localIndexCandidates: ['.claude-plugin/marketplace.json'],
-  missingRecovery: '安装或升级 Claude Code CLI，确认 plugin marketplace add 可用后重试。',
+  missingRecovery:
+    '安装或升级 Claude Code CLI（例如 npm install -g @anthropic-ai/claude-code），确认 claude plugin marketplace add 可用后重试。',
+  pluginInstallArgs: ['plugin', 'install'],
 });
 
 const codexAdapter = nativeAdapter({
@@ -479,7 +677,9 @@ const codexAdapter = nativeAdapter({
   label: 'Codex',
   executable: 'codex',
   localIndexCandidates: ['.agents/plugins/marketplace.json'],
-  missingRecovery: '安装或升级 Codex CLI，确认 plugin marketplace add 可用后重试。',
+  missingRecovery:
+    '安装或升级 Codex CLI（例如 npm install -g @openai/codex），确认 codex plugin marketplace add 可用后重试。',
+  pluginInstallArgs: ['plugin', 'add'],
 });
 
 const grokAdapter = nativeAdapter({
