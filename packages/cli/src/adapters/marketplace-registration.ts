@@ -127,7 +127,7 @@ export function normalizeMarketplaceSourceKey(value: string): string {
   }
   // Only the protocol and hostname are case-insensitive on ordinary Git hosts.
   // Repository paths and SSH usernames may identify distinct sources by case.
-  const withoutGit = (path: string): string => path.replace(/\/$/, '').replace(/\.git$/, '');
+  const withoutGit = (path: string): string => path.replace(/\/$/, '').replace(/\.git$/i, '');
   try {
     const url = new URL(trimmed);
     url.protocol = url.protocol.toLowerCase();

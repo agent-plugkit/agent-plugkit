@@ -883,6 +883,7 @@ function testMarketplaceListSourceMatching(): void {
     const source = normalizeMarketplaceSource(`${prefix}example.com${prefix === 'git@' ? ':' : '/'}owner/Tools.git`);
     assert.equal(marketplaceListContainsSource(JSON.stringify([source.input.replace('Tools', 'tools')]), source), false);
     assert.equal(marketplaceListContainsSource(JSON.stringify([source.input.replace('example.com', 'EXAMPLE.COM')]), source), true);
+    assert.equal(marketplaceListContainsSource(JSON.stringify([source.input.replace('.git', '.GIT')]), source), true);
   }
 }
 

@@ -44,9 +44,12 @@ npx agent-plugkit --root /path/to/marketplace validate --all
 
 If an `add skill` or `add hook` failure cannot confirm declaration rollback and directory sync,
 the error reports the absolute `document.previous` backup and target declaration paths. The backup
-is retained while scaffold rollback and lock release are still attempted. Manually compare and
-restore the declaration before removing the staging directory. If a write lock also remains,
-automatic stale-lock recovery preserves the backup and requires manual reconciliation before cleanup.
+is retained while scaffold rollback and lock release are still attempted. Manually compare the
+declaration and restore it if necessary before removing the staging directory. This recovery branch
+writes and syncs a `rollback-unconfirmed` marker in staging. If a write lock also remains,
+automatic stale-lock recovery preserves staging only when this marker exists, requiring manual
+reconciliation before cleanup. A dead owner's staging with a backup but no marker is reclaimed
+normally, including interruptions before replacement or after commit before cleanup.
 
 ## Marketplace Shape
 
@@ -158,7 +161,8 @@ not by name), then runs the client's own install command:
 Registration prechecks and plugin installation share these source matching rules: local sources
 match only their canonical filesystem path, including when entered as `owner/repo` or `.`.
 Relative paths resolve against `INIT_CWD` when set, otherwise the process working directory.
-Ordinary Git URLs preserve repository path case; protocol and hostname case are ignored.
+Ordinary Git URLs preserve repository path case; protocol and hostname case are ignored,
+and an optional `.git` suffix remains case-insensitive.
 GitHub shorthand, HTTPS, and SSH forms retain their existing equivalence.
 
 Pass only the plugin name (for example `musekit`); `@marketplace` is resolved automatically. If a

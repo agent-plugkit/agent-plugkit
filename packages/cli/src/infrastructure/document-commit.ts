@@ -36,6 +36,7 @@ export const WORKSPACE_WRITE_LOCK = '.agent-plugkit-write.lock';
 export const DOCUMENT_STAGING_PREFIX = '.agent-plugkit-document-';
 const LOCK_RECLAIM_PREFIX = '.agent-plugkit-lock-reclaim-';
 const LOCK_PREPARE_PREFIX = '.agent-plugkit-lock-prepare-';
+const ROLLBACK_UNCONFIRMED = 'rollback-unconfirmed';
 
 const activeLockTokens = new Set<string>();
 const activePrepareTokens = new Set<string>();
@@ -383,14 +384,14 @@ function reclaimAbandonedLock(
         staleStagingRelative,
       );
       const previousPath = join(staleStagingPath, 'document.previous');
-      if (existsSync(previousPath)) {
-        // A dead owner does not prove its declaration was restored durably.
-        // Keep both the recovery bytes and the lock until manually reconciled.
+      if (existsSync(join(staleStagingPath, ROLLBACK_UNCONFIRMED))) {
+        // A backup alone also exists before replacement and after commit.
+        // Only an explicitly unconfirmed rollback requires manual recovery.
         unlinkSync(quarantinePath);
         quarantineLinked = false;
         return {
           status: 'failed',
-          message: `上次事务的声明备份仍需核对恢复：${previousPath}；请人工核对目标声明并恢复后，再清理暂存目录和写入锁。`,
+          message: `上次事务的声明回滚尚未确认成功，恢复备份：${previousPath}；请人工核对目标声明，必要时从备份恢复，确认后再清理暂存目录和写入锁。`,
           diskChanged: false,
           changedPaths: [WORKSPACE_WRITE_LOCK, staleStagingRelative],
           cleanupComplete: false,
@@ -1439,8 +1440,20 @@ export function commitAuthorizedDocumentAndFiles(
   const cleanupFailures: string[] = [];
   const residualPaths = new Set(outcome.changedPaths);
   if (preserveDocumentBackup) {
+    const markerPath = join(stagingRoot!, ROLLBACK_UNCONFIRMED);
+    try {
+      writeFileSync(markerPath, `${targetPath}\n`, { flag: 'wx', mode: 0o600 });
+      (dependencies.syncStagedFile ?? syncFile)(markerPath);
+      const syncDirectory = dependencies.syncParentDirectory ?? syncFile;
+      syncDirectory(stagingRoot!);
+      syncDirectory(authorization.canonicalPath);
+    } catch (error) {
+      cleanupFailures.push(
+        `恢复保护标记未能确认持久化：${markerPath}；${failureMessage(error)}`,
+      );
+    }
     cleanupFailures.push(
-      `声明回滚尚未确认成功，已保留恢复备份：${backupPath}；目标声明：${targetPath}。请人工核对并从备份恢复，确认后再清理暂存目录。`,
+      `声明回滚尚未确认成功，已保留恢复备份：${backupPath}；目标声明：${targetPath}。请人工核对，必要时从备份恢复，确认后再清理暂存目录。`,
     );
     residualPaths.add(stagingRelative);
   } else if (stagingRoot !== undefined && stagingCreated) {

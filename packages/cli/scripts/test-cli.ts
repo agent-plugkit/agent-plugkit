@@ -13,6 +13,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -20,8 +21,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import yaml from 'js-yaml';
-import { commitAuthorizedDocumentAndFiles, documentRevision, DOCUMENT_STAGING_PREFIX,
-  WORKSPACE_WRITE_LOCK } from '../src/infrastructure/document-commit.js';
+import {
+  commitAuthorizedDocumentAndFiles, documentRevision,
+  DOCUMENT_STAGING_PREFIX, WORKSPACE_WRITE_LOCK,
+} from '../src/infrastructure/document-commit.js';
 
 interface CliResult {
   status: number | null;
@@ -1320,12 +1323,16 @@ function testDocumentRollbackRecovery(): void {
     const staging = `${DOCUMENT_STAGING_PREFIX}${token}`;
     const target = join(directory, 'plugin.yaml');
     const backup = join(directory, staging, 'document.previous');
+    const marker = join(directory, staging, 'rollback-unconfirmed');
     const previous = Buffer.from('name: previous\n');
     const next = Buffer.from('name: next\n');
     const fail = (): never => { throw new Error(`injected ${fault}`); };
     writeFileSync(target, previous);
-    const request = { directory, relativePath: 'plugin.yaml', expectedRevision: documentRevision(previous),
-      nextBytes: next, createFiles: [{ relativePath: 'skills/demo/SKILL.md', bytes: next, mode: 0o644 }] };
+    const request = {
+      directory, relativePath: 'plugin.yaml', expectedRevision: documentRevision(previous),
+      nextBytes: next,
+      createFiles: [{ relativePath: 'skills/demo/SKILL.md', bytes: next, mode: 0o644 }],
+    };
     const result = commitAuthorizedDocumentAndFiles(request, {
       createToken: () => token, afterReplace: fail,
       rollbackDocument: fault === 'replace' || fault === 'stale' ? fail : undefined,
@@ -1335,25 +1342,38 @@ function testDocumentRollbackRecovery(): void {
     assert.equal(result.status, 'failed');
     if (result.status !== 'failed') throw new Error('expected injected failure');
     const retained = fault !== 'none';
-    assert.deepEqual(result.transaction, { canonical: retained ? 'uncertain' : 'restored',
-      scaffolds: 'rolled-back', cleanupComplete: !retained });
+    assert.deepEqual(result.transaction, {
+      canonical: retained ? 'uncertain' : 'restored',
+      scaffolds: 'rolled-back', cleanupComplete: !retained,
+    });
     assert.equal(result.cleanupComplete, !retained);
     assert.equal(result.diskChanged, retained);
-    assert.deepEqual(result.changedPaths, retained ? ['plugin.yaml', staging, ...(fault === 'stale' ? [WORKSPACE_WRITE_LOCK] : [])] : []);
+    const expectedPaths = retained ? ['plugin.yaml', staging] : [];
+    if (fault === 'stale') expectedPaths.push(WORKSPACE_WRITE_LOCK);
+    assert.deepEqual(result.changedPaths, expectedPaths);
     assert.deepEqual(readFileSync(target), fault === 'replace' || fault === 'stale' ? next : previous);
     assert.equal(existsSync(join(directory, 'skills')), false);
     assert.equal(existsSync(join(directory, WORKSPACE_WRITE_LOCK)), fault === 'stale');
     assert.equal(existsSync(join(directory, staging)), retained);
+    assert.equal(existsSync(marker), retained);
     if (retained) {
       assert.deepEqual(readFileSync(backup), previous);
       assert.ok(result.message.includes(backup) && result.message.includes(target));
     }
     if (fault === 'stale') {
       const retry = commitAuthorizedDocumentAndFiles(request, { isProcessAlive: () => false });
-      assert.equal(retry.status, 'failed');
-      assert.ok(retry.status === 'failed' && retry.message.includes(backup) && !retry.cleanupComplete && !retry.diskChanged);
+      assert.ok(retry.status === 'failed' && retry.message.includes(backup));
+      assert.equal(retry.cleanupComplete, false);
+      assert.equal(retry.diskChanged, false);
       assert.deepEqual(readFileSync(backup), previous);
       assert.equal(readdirSync(directory).some((name) => name.startsWith('.agent-plugkit-lock-reclaim-')), false);
+      // Model a dead owner before replacement: backup and lock, no recovery marker.
+      unlinkSync(marker);
+      writeFileSync(target, previous);
+      const reclaimed = commitAuthorizedDocumentAndFiles(request, { isProcessAlive: () => false });
+      assert.equal(reclaimed.status, 'committed');
+      assert.equal(existsSync(join(directory, staging)), false);
+      assert.equal(existsSync(join(directory, WORKSPACE_WRITE_LOCK)), false);
     }
     rmSync(directory, { recursive: true, force: true });
   }

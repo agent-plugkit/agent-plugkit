@@ -100,7 +100,7 @@ guard descriptor 与提交后校验覆盖已定义冲突，但 Node rename 不�
 - **portable 与分发分层**：Agent Plugins 只标准化 Skills/MCP 包；客户端 index、安装、更新、信任和权限仍属于分发 adapter。
 - **插件安装需显式请求**：`install-repo` 默认只注册已就绪 Marketplace；仅在传入 `--plugin` 时，于该目标注册完成后通过客户端自身 CLI 安装插件（Claude Code `plugin install`、Codex `plugin add`），Marketplace 名称从 `plugin marketplace list --json` 按来源匹配得出，不按名称猜测。无文档化安装命令的目标返回需手动。它不构建或修改来源，也不安装缺失客户端（见 ADR-0003）。
 - **原生注册 list 预检**：Claude / Codex / Grok / Copilot 在 `plugin marketplace add` 前统一执行 `plugin marketplace list --json`，按来源 path/URL/repo 匹配已注册项后跳过 add；list 不可用或不匹配时再 add，并以共享的 already-registered 文案作为兜底。匹配不按 marketplace 名称，避免同名覆盖误判。
-- **来源身份**：注册预检与插件安装名称解析共用匹配键。本地来源只按规范路径匹配，不把原始 `owner/repo` 或 `.` 再解释为别名；application 按 `baseDir → INIT_CWD → process.cwd()` 解析相对路径。普通 Git URL 仅规范化协议和主机大小写，保留路径大小写；GitHub shorthand、HTTPS、SSH 的既有等价规则不变。
+- **来源身份**：注册预检与插件安装名称解析共用匹配键。本地来源只按规范路径匹配，不把原始 `owner/repo` 或 `.` 再解释为别名；application 按 `baseDir → INIT_CWD → process.cwd()` 解析相对路径。普通 Git URL 仅规范化协议和主机大小写，保留路径大小写，`.git` 后缀仍不区分大小写；GitHub shorthand、HTTPS、SSH 的既有等价规则不变。
 - **本地来源只读**：VS Code 用户配置路径与本地 Marketplace 相等、位于其内或经现有 symlink 指回来源时，在配置提交前失败。
 - **终端安全预检**：来源原值、百分号解码值、解析候选路径与真实路径中的 C0/C1/DEL 在呈现或客户端调用前统一拒绝；Git shorthand 的点路径段不作为远端仓库接受。
 - **路径段语义**：本地存在性检查保留用户输入的中间段，只有确认整条路径可访问后才生成 realpath。
@@ -109,7 +109,7 @@ guard descriptor 与提交后校验覆盖已定义冲突，但 Node rename 不�
 - **部分结果不回滚**：目标按固定顺序执行；非中断失败继续，最终以 `0/1/2/130` 和逐目标文字状态表达结果。
 - **客户端镜像优先级**：每个 marketplace root 的 `marketplace.json` 与 `.github/plugin/marketplace.json` 同字节；Codex index 只在 `.agents/plugins/marketplace.json`；Grok Build index 只在 `.grok-plugin/marketplace.json`。
 - **路径安全和事务**：声明路径、导入源与生成目标通过 `authorized-path`；创建、生成和 release 使用 revision/fingerprint、锁、staging、原子替换与有界回滚。
-- **组件声明恢复**：`add skill/hook` 回滚从 `document.previous` 复制并同步独立候选后原子替换声明，恢复和目录同步均成功才确认回滚完成。未确认时返回 `failed`、`canonical: uncertain`、`cleanupComplete: false`，保留 staging 并在错误中报告备份和目标的绝对路径，仍尝试清理新增组件和释放锁。若锁也残留，旧锁回收发现备份时保留锁及 staging 并报告恢复路径，须人工核对恢复后再清理。
+- **组件声明恢复**：`add skill/hook` 回滚从 `document.previous` 复制并同步独立候选后原子替换声明，恢复和目录同步均成功才确认回滚完成。未确认时返回 `failed`、`canonical: uncertain`、`cleanupComplete: false`，保留 staging 并在错误中报告备份和目标的绝对路径，仍尝试清理新增组件和释放锁。仅在保留备份分支写入并同步 `rollback-unconfirmed` 标记及其目录；标记持久化失败单独报告。若锁也残留，旧锁回收只在发现此标记时保留锁及 staging 并报告恢复路径，须人工核对、必要时恢复后再清理。持锁进程在替换前或提交后清理前退出，仅留下备份而无标记时仍正常回收。
 - **输出隔离**：CLI 编译只写 `packages/cli/dist`；临时 marketplace 的 `release-local` 制品不得进入 CLI npm 包。
 - **发布生命周期**：`packages/cli` 的 `prepack` 总是先执行 workspace build；正常 `npm pack` / `npm publish` 不得依赖已有 `dist`，也不能成功产生缺少可执行 bin 的包。
 - **Marketplace cwd**：外部 marketplace 的 npm scripts 在自身 cwd 运行并让 CLI 默认发现 marketplace root；不得把 `--root .` 交给会按外层 `INIT_CWD` 解释相对路径的入口。
