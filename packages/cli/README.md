@@ -42,6 +42,12 @@ Use `--root <dir>` when running from outside a marketplace repository:
 npx agent-plugkit --root /path/to/marketplace validate --all
 ```
 
+If an `add skill` or `add hook` failure cannot confirm declaration rollback and directory sync,
+the error reports the absolute `document.previous` backup and target declaration paths. The backup
+is retained while scaffold rollback and lock release are still attempted. Manually compare and
+restore the declaration before removing the staging directory. If a write lock also remains,
+automatic stale-lock recovery preserves the backup and requires manual reconciliation before cleanup.
+
 ## Marketplace Shape
 
 ```text
@@ -148,6 +154,12 @@ not by name), then runs the client's own install command:
 | --- | --- |
 | `claude` | `claude plugin install <plugin>@<marketplace>` |
 | `codex` | `codex plugin add <plugin>@<marketplace>` |
+
+Registration prechecks and plugin installation share these source matching rules: local sources
+match only their canonical filesystem path, including when entered as `owner/repo` or `.`.
+Relative paths resolve against `INIT_CWD` when set, otherwise the process working directory.
+Ordinary Git URLs preserve repository path case; protocol and hostname case are ignored.
+GitHub shorthand, HTTPS, and SSH forms retain their existing equivalence.
 
 Pass only the plugin name (for example `musekit`); `@marketplace` is resolved automatically. If a
 client CLI is missing, both its registration and its plugin installs are reported as `[缺少 CLI]`

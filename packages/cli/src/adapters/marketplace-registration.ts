@@ -125,8 +125,22 @@ export function normalizeMarketplaceSourceKey(value: string): string {
       return `local:${resolve(trimmed)}`;
     }
   }
-  const withoutGit = trimmed.replace(/\.git$/i, '').replace(/\/$/, '');
-  return `other:${withoutGit.toLowerCase()}`;
+  // Only the protocol and hostname are case-insensitive on ordinary Git hosts.
+  // Repository paths and SSH usernames may identify distinct sources by case.
+  const withoutGit = (path: string): string => path.replace(/\/$/, '').replace(/\.git$/, '');
+  try {
+    const url = new URL(trimmed);
+    url.protocol = url.protocol.toLowerCase();
+    url.hostname = url.hostname.toLowerCase();
+    url.pathname = withoutGit(url.pathname);
+    return `other:${url.href}`;
+  } catch {
+    const scp = trimmed.match(/^([^@/]+@)([^:/]+):(.+)$/);
+    if (scp) {
+      return `other:${scp[1]}${scp[2].toLowerCase()}:${withoutGit(scp[3])}`;
+    }
+    return `other:${withoutGit(trimmed)}`;
+  }
 }
 
 function collectMarketplaceSourceCandidates(
@@ -162,15 +176,16 @@ function collectMarketplaceSourceCandidates(
 }
 
 function wantedSourceKeys(source: MarketplaceRegistrationSource): Set<string> {
-  const wanted = new Set(
+  // Application normalization already resolved relative paths against INIT_CWD
+  // (or its explicit baseDir). Reinterpreting input here loses that identity.
+  if (source.kind === 'local') {
+    return new Set([normalizeMarketplaceSourceKey(source.localPath)]);
+  }
+  return new Set(
     [source.clientValue, source.displayValue, source.input]
       .map((value) => normalizeMarketplaceSourceKey(value))
       .filter((value) => value.length > 0),
   );
-  if (source.kind === 'local') {
-    wanted.add(normalizeMarketplaceSourceKey(source.localPath));
-  }
-  return wanted;
 }
 
 function candidatesMatch(candidates: readonly string[], wanted: ReadonlySet<string>): boolean {

@@ -862,6 +862,28 @@ function testMarketplaceListSourceMatching(): void {
     false,
   );
   assert.equal(marketplaceListContainsSource('not-json', remoteSource), false);
+  mkdirSync(join(localRoot, 'owner/repo'), { recursive: true });
+  const relativeSource = normalizeMarketplaceSource('owner/repo', { baseDir: localRoot });
+  const remoteList = JSON.stringify([{ name: 'remote-market', repo: 'owner/repo' }]);
+  assert.equal(marketplaceListContainsSource(remoteList, relativeSource), false);
+  assert.equal(marketplaceNameFromList(remoteList, relativeSource), undefined);
+  const mixed = JSON.stringify([...JSON.parse(remoteList), { name: 'local-market', path: join(canonical, 'owner/repo') }]);
+  assert.equal(marketplaceNameFromList(mixed, relativeSource), 'local-market');
+  const previousInitCwd = process.env.INIT_CWD;
+  try {
+    process.env.INIT_CWD = localRoot;
+    const dot = normalizeMarketplaceSource('.');
+    assert.equal(marketplaceListContainsSource(JSON.stringify([{ path: process.cwd() }]), dot), false);
+    assert.equal(marketplaceNameFromList(JSON.stringify([{ name: 'local-market', path: canonical }]), dot), 'local-market');
+  } finally {
+    if (previousInitCwd === undefined) delete process.env.INIT_CWD;
+    else process.env.INIT_CWD = previousInitCwd;
+  }
+  for (const prefix of ['https://', 'ssh://git@', 'git@']) {
+    const source = normalizeMarketplaceSource(`${prefix}example.com${prefix === 'git@' ? ':' : '/'}owner/Tools.git`);
+    assert.equal(marketplaceListContainsSource(JSON.stringify([source.input.replace('Tools', 'tools')]), source), false);
+    assert.equal(marketplaceListContainsSource(JSON.stringify([source.input.replace('example.com', 'EXAMPLE.COM')]), source), true);
+  }
 }
 
 function testMarketplaceNameResolution(): void {
@@ -1020,9 +1042,14 @@ async function testNativeListPrecheckIdempotency(): Promise<void> {
 }
 
 async function testRealGrokCliRegistration(): Promise<void> {
+  const home = mkdtempSync(join(tmpdir(), 'agent-plugkit-grok-home-'));
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PATH: `${join(process.env.HOME || '', '.grok/bin')}${process.env.PATH ? `:${process.env.PATH}` : ''}`,
+    HOME: home,
+    USERPROFILE: home,
+    XDG_CONFIG_HOME: join(home, '.config'),
+    XDG_DATA_HOME: join(home, '.local/share'),
   };
   delete env.INIT_CWD;
   const which = spawnSync('grok', ['--version'], {
@@ -1529,7 +1556,7 @@ if (args.includes('list')) {
   const marketplace = process.env.AGENT_PLUGKIT_FAKE_MARKETPLACE_NAME || 'fake-market';
   const listed = name === 'codex'
     ? { marketplaces: sources.map((source) => ({ name: marketplace, root: '/fake/' + marketplace, marketplaceSource: { sourceType: 'git', source } })) }
-    : sources.map((repo) => ({ name: marketplace, source: 'github', repo }));
+    : sources.map((repo) => ({ name: repo === 'owner/repo' && mode === 'source-collision' ? 'remote-market' : marketplace, source: 'github', repo }));
   process.stdout.write(JSON.stringify(listed) + '\\n');
   process.exit(0);
 }
@@ -1848,6 +1875,19 @@ function testCliEndToEnd(): void {
 }
 
 function testCliPluginInstallEndToEnd(): void {
+  const collision = fakeCliEnvironment(['claude']);
+  const base = mkdtempSync(join(tmpdir(), 'agent-plugkit-source-collision-'));
+  const local = join(realpathSync(base), 'owner/repo');
+  mkdirSync(join(local, '.claude-plugin'), { recursive: true });
+  writeFileSync(join(local, '.claude-plugin/marketplace.json'), '{}');
+  writeFileSync(`${collision.logPath}.claude.marketplaces.json`, JSON.stringify(['owner/repo']));
+  collision.env.AGENT_PLUGKIT_FAKE_CLAUDE = 'source-collision';
+  collision.env.INIT_CWD = base;
+  const installed = runCli(['install-repo', 'owner/repo', '--agent', 'claude', '--plugin', 'musekit'], collision.env);
+  assert.equal(installed.status, 0, installed.output);
+  assert.deepEqual(readFakeCalls(collision.logPath).filter(({ args }) => !args.includes('--help') && !args.includes('list')).map(({ args }) => args), [
+    ['plugin', 'marketplace', 'add', local], ['plugin', 'install', 'musekit@fake-market'],
+  ]);
   const completeFixture = fakeCliEnvironment(['claude', 'codex']);
   const completed = runCli(
     [
