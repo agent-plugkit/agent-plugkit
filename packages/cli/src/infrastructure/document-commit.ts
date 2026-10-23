@@ -36,6 +36,7 @@ export const WORKSPACE_WRITE_LOCK = '.agent-plugkit-write.lock';
 export const DOCUMENT_STAGING_PREFIX = '.agent-plugkit-document-';
 const LOCK_RECLAIM_PREFIX = '.agent-plugkit-lock-reclaim-';
 const LOCK_PREPARE_PREFIX = '.agent-plugkit-lock-prepare-';
+const ROLLBACK_UNCONFIRMED = 'rollback-unconfirmed';
 
 const activeLockTokens = new Set<string>();
 const activePrepareTokens = new Set<string>();
@@ -69,7 +70,8 @@ export interface AtomicDocumentAndFilesCommitDependencies
   readonly beforeCreateFile?: (stagedPath: string, targetPath: string) => void;
   readonly createFile?: (stagedPath: string, targetPath: string) => void;
   readonly rollbackFile?: (targetPath: string) => void;
-  readonly rollbackDocument?: (backupPath: string, targetPath: string) => void;
+  /** Replace from an independent restore candidate; never consume the backup. */
+  readonly rollbackDocument?: (restorePath: string, targetPath: string) => void;
 }
 
 export interface AtomicDocumentAndFilesTransactionFacts {
@@ -375,15 +377,31 @@ function reclaimAbandonedLock(
     ) {
       throw new Error('旧写入锁在隔离期间发生变化，未移除 canonical 锁');
     }
-    releaseWorkspaceLock(lockPath, lockToken);
-    canonicalLockRemoved = true;
-
     if (lockToken !== undefined) {
       staleStagingRelative = `${DOCUMENT_STAGING_PREFIX}${lockToken}`;
       staleStagingPath = resolveAuthorizedPath(
         directory,
         staleStagingRelative,
       );
+      const previousPath = join(staleStagingPath, 'document.previous');
+      if (existsSync(join(staleStagingPath, ROLLBACK_UNCONFIRMED))) {
+        // A backup alone also exists before replacement and after commit.
+        // Only an explicitly unconfirmed rollback requires manual recovery.
+        unlinkSync(quarantinePath);
+        quarantineLinked = false;
+        return {
+          status: 'failed',
+          message: `上次事务的声明回滚尚未确认成功，恢复备份：${previousPath}；请人工核对目标声明，必要时从备份恢复，确认后再清理暂存目录和写入锁。`,
+          diskChanged: false,
+          changedPaths: [WORKSPACE_WRITE_LOCK, staleStagingRelative],
+          cleanupComplete: false,
+        };
+      }
+    }
+    releaseWorkspaceLock(lockPath, lockToken);
+    canonicalLockRemoved = true;
+
+    if (staleStagingPath !== undefined && staleStagingRelative !== undefined) {
       if (existsSync(staleStagingPath)) {
         try {
           rmSync(staleStagingPath, { recursive: true, force: true });
@@ -1190,6 +1208,7 @@ export function commitAuthorizedDocumentAndFiles(
   let targetPath: string | undefined;
   let backupPath: string | undefined;
   let documentReplaced = false;
+  let preserveDocumentBackup = false;
   const createdFiles: Array<{ relativePath: string; path: string }> = [];
   const createdDirectories: string[] = [];
   let outcome: AtomicDocumentCommitResult;
@@ -1323,13 +1342,20 @@ export function commitAuthorizedDocumentAndFiles(
     const rollbackFailures: string[] = [];
     const documentWasReplaced = documentReplaced;
     let documentRestored = false;
+    let documentRollbackConfirmed = false;
     if (
       documentReplaced &&
       backupPath !== undefined &&
       targetPath !== undefined
     ) {
       try {
-        (dependencies.rollbackDocument ?? renameSync)(backupPath, targetPath);
+        // rename consumes its source. Restore from a separate, synced copy so
+        // even a failure after replacement leaves the original recovery bytes.
+        const restorePath = join(dirname(backupPath), "document.restore");
+        copyFileSync(backupPath, restorePath, fsConstants.COPYFILE_EXCL);
+        chmodSync(restorePath, lstatSync(backupPath).mode & 0o777);
+        (dependencies.syncStagedFile ?? syncFile)(restorePath);
+        (dependencies.rollbackDocument ?? renameSync)(restorePath, targetPath);
         documentReplaced = false;
         documentRestored = true;
       } catch (rollbackError) {
@@ -1366,12 +1392,14 @@ export function commitAuthorizedDocumentAndFiles(
           ((directory: string) => syncFile(directory));
         syncDirectory(dirname(targetPath));
         syncDirectory(authorization.canonicalPath);
+        documentRollbackConfirmed = true;
       } catch (rollbackSyncError) {
         rollbackFailures.push(
           `恢复后的声明未能确认耐久同步：${failureMessage(rollbackSyncError)}`,
         );
       }
     }
+    preserveDocumentBackup = documentWasReplaced && !documentRollbackConfirmed;
     const residual = [
       ...(documentReplaced ? [request.relativePath] : []),
       ...createdFiles
@@ -1379,7 +1407,7 @@ export function commitAuthorizedDocumentAndFiles(
         .map((entry) => entry.relativePath),
     ];
     transactionCanonical = documentWasReplaced
-      ? documentRestored && rollbackFailures.length === 0
+      ? documentRollbackConfirmed
         ? "restored"
         : "uncertain"
       : "unchanged";
@@ -1411,7 +1439,24 @@ export function commitAuthorizedDocumentAndFiles(
 
   const cleanupFailures: string[] = [];
   const residualPaths = new Set(outcome.changedPaths);
-  if (stagingRoot !== undefined && stagingCreated) {
+  if (preserveDocumentBackup) {
+    const markerPath = join(stagingRoot!, ROLLBACK_UNCONFIRMED);
+    try {
+      writeFileSync(markerPath, `${targetPath}\n`, { flag: 'wx', mode: 0o600 });
+      (dependencies.syncStagedFile ?? syncFile)(markerPath);
+      const syncDirectory = dependencies.syncParentDirectory ?? syncFile;
+      syncDirectory(stagingRoot!);
+      syncDirectory(authorization.canonicalPath);
+    } catch (error) {
+      cleanupFailures.push(
+        `恢复保护标记未能确认持久化：${markerPath}；${failureMessage(error)}`,
+      );
+    }
+    cleanupFailures.push(
+      `声明回滚尚未确认成功，已保留恢复备份：${backupPath}；目标声明：${targetPath}。请人工核对，必要时从备份恢复，确认后再清理暂存目录。`,
+    );
+    residualPaths.add(stagingRelative);
+  } else if (stagingRoot !== undefined && stagingCreated) {
     try {
       (dependencies.cleanupStaging ??
         ((path: string) => rmSync(path, { recursive: true, force: true })))(
