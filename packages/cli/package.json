@@ -1,6 +1,6 @@
 {
   "name": "agent-plugkit",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": false,
   "description": "CLI toolkit for building and maintaining AI agent plugin marketplaces",
   "license": "MIT",
